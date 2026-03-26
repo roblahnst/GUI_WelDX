@@ -1,6 +1,6 @@
 # WelDX Editor
 
-Streamlit-basierte GUI zum Anreichern von WelDX-Dateien, die aus dem RoboScope-Schweißroboter exportiert wurden.
+Streamlit-basierte GUI zum Anreichern von WelDX-Dateien.
 
 RoboScope exportiert Messdaten (Strom, Spannung, Drahtgeschwindigkeit, Gasfluss) im [WelDX-Format](https://weldx.readthedocs.io/) (ASDF-basiert). Der WelDX Editor ergänzt diese Dateien um fehlende Metadaten: Werkstoff, Nahtgeometrie, Schweißverfahren, Schutzgas, Koordinatensysteme und Qualitätsbewertung.
 
@@ -88,4 +88,4 @@ Alle Nutzereingaben (Material, Nut-Parameter, Qualitätsstufe etc.) werden autom
 
 ## Lizenz
 
-Internes Projekt — RoboScope / BAM.
+BSD 3-Clause License — siehe [LICENSE](LICENSE) für Details.

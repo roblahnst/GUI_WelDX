@@ -198,10 +198,33 @@ def _describe_time_series(name: str, value: Any) -> dict:
         if arr is not None and len(arr) > 0:
             info["samples"] = int(len(arr))
             info["unit"] = unit
-            info["min"] = float(np.nanmin(arr))
-            info["max"] = float(np.nanmax(arr))
+            info["values_raw"] = arr
+
+            # Outlier detection using IQR method
+            q1 = float(np.nanpercentile(arr, 1))
+            q99 = float(np.nanpercentile(arr, 99))
+            iqr = q99 - q1
+            lower_bound = q1 - 5 * iqr
+            upper_bound = q99 + 5 * iqr
+
+            outlier_mask = (arr < lower_bound) | (arr > upper_bound)
+            n_outliers = int(np.sum(outlier_mask))
+
+            if n_outliers > 0 and n_outliers < len(arr) * 0.5:
+                # Replace outliers with NaN for clean visualization
+                arr_clean = arr.astype(float).copy()
+                arr_clean[outlier_mask] = np.nan
+                info["values"] = arr_clean
+                info["outliers_removed"] = n_outliers
+                info["min"] = float(np.nanmin(arr_clean))
+                info["max"] = float(np.nanmax(arr_clean))
+            else:
+                info["values"] = arr
+                info["outliers_removed"] = 0
+                info["min"] = float(np.nanmin(arr))
+                info["max"] = float(np.nanmax(arr))
+
             info["range"] = f"{info['min']:.2f} – {info['max']:.2f}"
-            info["values"] = arr
         elif unit:
             info["unit"] = unit
 

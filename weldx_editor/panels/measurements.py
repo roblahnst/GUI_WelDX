@@ -79,6 +79,14 @@ def render_measurements(state):
                 st.caption(range_text)
 
                 # Visualization expander
+                # Show outlier warning if applicable
+                n_outliers = meas_info.get("outliers_removed", 0)
+                if n_outliers > 0:
+                    st.warning(
+                        f"⚠️ {n_outliers} Ausreißer erkannt und aus der Darstellung entfernt "
+                        f"(Sensor-Artefakte / ungültige Messwerte)."
+                    )
+
                 with st.expander(f"📊 Visualisieren: {meas_name}"):
                     try:
                         has_real_data = "values" in meas_info and meas_info["values"] is not None

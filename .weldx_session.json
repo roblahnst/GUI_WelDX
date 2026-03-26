@@ -1,0 +1,33 @@
+{
+  "file_path": "roboscope.wx",
+  "base_metal": {
+    "designation": "S420"
+  },
+  "groove": {},
+  "shielding_gas": {
+    "flowrate_value": 15.0,
+    "flowrate_unit": "liter / minute"
+  },
+  "process": {
+    "tag": "GMAW",
+    "base_process": "pulse",
+    "manufacturer": "",
+    "power_source": ""
+  },
+  "filler_material": {
+    "wire_type": "G3Si1 (SG2) — EN ISO 14341-A",
+    "diameter_mm": 1.2
+  },
+  "quality": {
+    "criteria": "ISO 5817 Level C"
+  },
+  "metadata": {
+    "operator": "Robert Lahnsteiner",
+    "material": "S420",
+    "job_part": "0815",
+    "source_format": "RoboScope RBS1",
+    "exported_at": "2026-03-26T12:28:51.247000",
+    "start_time": "2026-02-02T09:34:06.144000"
+  },
+  "active_panel": "quality"
+}
