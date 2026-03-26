@@ -161,7 +161,16 @@ def get_custom_css() -> str:
     /* Hide default Streamlit elements for cleaner look */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
-    header {visibility: hidden;}
+
+    /* Hide header branding/deploy buttons but keep sidebar toggle */
+    [data-testid="stHeader"] {
+        pointer-events: auto !important;
+    }
+    [data-testid="stAppDeployButton"],
+    [data-testid="stHeaderActionElements"],
+    [data-testid="stStatusWidget"] {
+        display: none !important;
+    }
 
     /* Sidebar refinements */
     [data-testid="stSidebar"] {

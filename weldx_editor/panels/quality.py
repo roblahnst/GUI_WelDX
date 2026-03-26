@@ -172,7 +172,6 @@ def render_quality(state):
                     # Try to import weldx
                     try:
                         import weldx
-                        from weldx import WeldX
                         has_weldx = True
                     except ImportError:
                         has_weldx = False

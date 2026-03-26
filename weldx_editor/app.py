@@ -17,6 +17,7 @@ from weldx_editor.utils.style import (
 from weldx_editor.utils.weldx_io import (
     WeldxFileState, load_weldx_file, load_weldx_from_bytes,
     save_weldx_file, get_tree_summary, WELDX_AVAILABLE,
+    _update_completion,
 )
 from weldx_editor.panels.overview import render_overview
 from weldx_editor.panels.workpiece import render_workpiece
@@ -114,7 +115,6 @@ def render_sidebar():
             if state and item["id"] != "overview":
                 comp = state.completion.get(
                     item["id"],
-                    # Map nav items to completion keys
                     state.completion.get(
                         {"workpiece": "workpiece", "process": "process",
                          "measurements": "measurements", "coordinates": "coordinates",
@@ -126,20 +126,31 @@ def render_sidebar():
 
             is_active = st.session_state.active_panel == item["id"]
             btn_type = "primary" if is_active else "secondary"
+            disabled = not st.session_state.file_loaded and item["id"] != "overview"
 
-            if st.button(
-                f"{item['icon']} {item['label']}  {status_icon}",
-                key=f"nav_{item['id']}",
-                use_container_width=True,
-                type=btn_type,
-                disabled=not st.session_state.file_loaded and item["id"] != "overview",
-            ):
-                st.session_state.active_panel = item["id"]
-                st.rerun()
+            col_label, col_status = st.columns([5, 1])
+            with col_label:
+                if st.button(
+                    f"{item['icon']} {item['label']}",
+                    key=f"nav_{item['id']}",
+                    use_container_width=True,
+                    type=btn_type,
+                    disabled=disabled,
+                ):
+                    st.session_state.active_panel = item["id"]
+                    st.rerun()
+            with col_status:
+                if status_icon:
+                    st.markdown(
+                        f"<div style='display:flex;align-items:center;"
+                        f"justify-content:center;height:42px;'>"
+                        f"{status_icon}</div>",
+                        unsafe_allow_html=True,
+                    )
 
         st.divider()
 
-        # Save button
+        # Save / Validate / Close buttons
         if st.session_state.file_loaded and state:
             col1, col2 = st.columns(2)
             with col1:
@@ -149,6 +160,13 @@ def render_sidebar():
                 if st.button("🛡️ Validieren", use_container_width=True):
                     st.session_state.active_panel = "quality"
                     st.rerun()
+
+            if st.button("🗙 Datei schließen", use_container_width=True):
+                clear_session()
+                st.session_state.state = None
+                st.session_state.file_loaded = False
+                st.session_state.active_panel = "overview"
+                st.rerun()
 
 
 def render_file_upload():
@@ -362,6 +380,9 @@ def main():
     init_session_state()
 
     if st.session_state.file_loaded and st.session_state.state:
+        # Refresh completion status from current state
+        _update_completion(st.session_state.state)
+
         # File is loaded - show sidebar + content
         render_sidebar()
         render_main_content()

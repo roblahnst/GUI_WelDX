@@ -1,0 +1,5 @@
+.weldx_cache/
+.weldx_session.json
+__pycache__/
+*.pyc
+.DS_Store

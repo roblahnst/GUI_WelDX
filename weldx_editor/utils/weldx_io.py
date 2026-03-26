@@ -100,21 +100,25 @@ def load_weldx_file(file_path: str) -> WeldxFileState:
 
 
 def load_weldx_from_bytes(file_bytes: bytes, filename: str) -> WeldxFileState:
-    """Load a WeldX file from uploaded bytes."""
+    """Load a WeldX file from uploaded bytes.
+
+    The uploaded file is persisted in a stable cache directory so that it
+    survives browser reloads (the session restore logic re-opens the file
+    by its path).
+    """
     if not WELDX_AVAILABLE:
         raise ImportError("weldx package is not installed")
 
-    suffix = Path(filename).suffix or ".weldx"
-    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
-    tmp.write(file_bytes)
-    tmp.close()
+    cache_dir = Path(__file__).resolve().parent.parent.parent / ".weldx_cache"
+    cache_dir.mkdir(exist_ok=True)
+    cached_path = cache_dir / Path(filename).name
+    cached_path.write_bytes(file_bytes)
 
     try:
-        state = load_weldx_file(tmp.name)
-        state.file_path = filename
+        state = load_weldx_file(str(cached_path))
         return state
     except Exception:
-        os.unlink(tmp.name)
+        cached_path.unlink(missing_ok=True)
         raise
 
 
@@ -465,10 +469,12 @@ def _update_completion(state: WeldxFileState):
 
     # Process
     has_process = bool(state.process) and state.process.get("tag", "")
-    has_gas = bool(state.shielding_gas) and state.shielding_gas.get("common_name", "")
+    has_gas = bool(state.shielding_gas) and any(
+        state.shielding_gas.get(k) for k in ("common_name", "flowrate_value", "components")
+    )
     if has_process and has_gas:
         tag = state.process.get("tag", "")
-        gas = state.shielding_gas.get("common_name", "")
+        gas = state.shielding_gas.get("common_name", "") or "Schutzgas definiert"
         state.completion["process"] = {"status": "complete", "detail": f"{tag} – {gas}"}
     elif has_process or has_gas:
         state.completion["process"] = {"status": "partial", "detail": "Teilweise definiert"}
@@ -544,8 +550,10 @@ def get_tree_summary(state: WeldxFileState) -> dict:
         elif isinstance(obj, (list, np.ndarray)):
             length = len(obj) if hasattr(obj, '__len__') else '?'
             return f"[Array: {length} items]"
-        elif hasattr(obj, 'shape'):
+        elif isinstance(obj, np.ndarray):
             return f"<ndarray {obj.shape} {obj.dtype}>"
+        elif hasattr(obj, '__class__'):
+            return f"<{type(obj).__name__}>"
         else:
             return str(obj)[:100]
 

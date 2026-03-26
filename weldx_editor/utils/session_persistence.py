@@ -46,6 +46,7 @@ def save_session(state, active_panel: str = "overview") -> bool:
             "process": _serialisable(getattr(state, "process", {})),
             "filler_material": _serialisable(getattr(state, "filler_material", {})),
             "quality": _serialisable(getattr(state, "quality", {})),
+            "coordinate_systems": _serialisable(getattr(state, "coordinate_systems", {})),
             "metadata": _serialisable(getattr(state, "metadata", {})),
             "active_panel": active_panel,
         }
@@ -68,7 +69,7 @@ def load_session() -> Optional[dict]:
 def restore_into_state(state, saved: dict):
     """Apply saved user-editable fields back into a WeldxFileState."""
     for key in ("base_metal", "groove", "shielding_gas", "process",
-                "filler_material", "quality", "metadata"):
+                "filler_material", "quality", "coordinate_systems", "metadata"):
         val = saved.get(key)
         if val:
             setattr(state, key, val)
