@@ -30,15 +30,6 @@ from weldx_editor.utils.session_persistence import (
 )
 
 
-# ─── Page Configuration ─────────────────────────────────────
-st.set_page_config(
-    page_title="WelDX Editor",
-    page_icon="🔧",
-    layout="wide",
-    initial_sidebar_state="expanded",
-)
-
-
 def init_session_state():
     """Initialize session state variables.
 
@@ -373,6 +364,13 @@ def render_main_content():
 
 def main():
     """Main application entry point."""
+    st.set_page_config(
+        page_title="WelDX Editor",
+        page_icon="🔧",
+        layout="wide",
+        initial_sidebar_state="expanded",
+    )
+
     # Inject custom CSS
     st.markdown(get_custom_css(), unsafe_allow_html=True)
 

@@ -1,19 +1,9 @@
 {
   "file_path": "/Users/robertlahnsteiner/Documents/Github_Repositories/GUI_WelDX/.weldx_cache/roboscope.wx",
   "base_metal": {
-    "designation": "S420",
-    "material_group": "Stähle",
-    "material": "S235JR (1.0038) — EN 10025-2",
-    "plate_thickness": 10.0
+    "designation": "S420"
   },
-  "groove": {
-    "type": "V-Naht",
-    "params": {
-      "alpha": 60.0,
-      "b": 2.0,
-      "c": 1.0
-    }
-  },
+  "groove": {},
   "shielding_gas": {
     "flowrate_value": 15.0,
     "flowrate_unit": "liter / minute"
@@ -21,50 +11,15 @@
   "process": {
     "tag": "GMAW",
     "base_process": "pulse",
-    "manufacturer": "Fronius",
-    "power_source": "TPSi"
+    "manufacturer": "",
+    "power_source": ""
   },
   "filler_material": {
     "wire_type": "G3Si1 (SG2) — EN ISO 14341-A",
     "diameter_mm": 1.2
   },
-  "quality": {
-    "criteria": "ISO 5817 Level B",
-    "level": "B"
-  },
-  "coordinate_systems": {
-    "robot_base": {
-      "name": "robot_base",
-      "status": "complete",
-      "parent": null
-    },
-    "tcp": {
-      "name": "tcp",
-      "status": "complete",
-      "parent": "robot_base",
-      "translation": {
-        "x": 0,
-        "y": 0,
-        "z": 0
-      }
-    },
-    "Standard": {
-      "name": "Standard",
-      "status": "incomplete",
-      "parent": "robot_base",
-      "translation": {
-        "x": 0.0,
-        "y": 0.0,
-        "z": 0.0
-      },
-      "rotation": {
-        "type": "euler",
-        "x": 0.0,
-        "y": 0.0,
-        "z": 0.0
-      }
-    }
-  },
+  "quality": {},
+  "coordinate_systems": {},
   "metadata": {
     "operator": "Robert Lahnsteiner",
     "material": "S420",
@@ -73,5 +28,5 @@
     "exported_at": "2026-03-26T12:28:51.247000",
     "start_time": "2026-02-02T09:34:06.144000"
   },
-  "active_panel": "workpiece"
+  "active_panel": "process"
 }
