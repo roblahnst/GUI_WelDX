@@ -1069,26 +1069,27 @@ def save_weldx_file(state: WeldxFileState, output_path: str):
     if not WELDX_AVAILABLE:
         raise ImportError("weldx package is not installed")
 
-    wx = state.wx_file
-    if wx is None:
-        wx = WeldxFile(tree={}, mode="rw")
+    # Build output tree from original tree (preserves all data)
+    out_tree = dict(state.tree) if state.tree else {}
 
+    # Apply user edits on top
     if state.groove is not None:
-        wx["groove"] = state.groove
+        out_tree["groove"] = state.groove
     if state.base_metal:
-        wx["base_metal"] = state.base_metal
+        out_tree["base_metal"] = state.base_metal
     if state.process:
-        wx["process"] = state.process
+        out_tree["process"] = state.process
     if state.shielding_gas:
-        wx["shielding_gas"] = state.shielding_gas
+        out_tree["shielding_gas"] = state.shielding_gas
     if state.filler_material:
-        wx["filler_material"] = state.filler_material
+        out_tree["filler_material"] = state.filler_material
     if state.quality:
-        wx["quality"] = state.quality
+        out_tree["quality"] = state.quality
     if state.metadata:
-        wx["metadata"] = state.metadata
+        out_tree["metadata"] = state.metadata
 
-    wx.write_to(output_path)
+    wx = WeldxFile(tree=out_tree, mode="rw")
+    wx.write_to(output_path, all_array_compression="zlib")
     return output_path
 
 
