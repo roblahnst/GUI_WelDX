@@ -54,6 +54,7 @@ class WeldxFileState:
     equipment: dict = field(default_factory=dict)           # measurement chains from equipment.*
     coordinate_systems: dict = field(default_factory=dict)
     _csm: Any = None                                          # weldx CoordinateSystemManager (if available)
+    workpiece_meshes: list = field(default_factory=list)       # list of {vertices, triangles} dicts
     groove: Any = None
     base_metal: dict = field(default_factory=dict)
     shielding_gas: dict = field(default_factory=dict)       # extracted from process.shielding_gas
@@ -148,10 +149,11 @@ def _extract_measurements(state: WeldxFileState):
                 ts = ts_list
             key = meas_name.replace(" ", "_")
             info = _describe_time_series(meas_name, ts)
-            # Attach measurement chain info if present
+            # Extract measurement chain details
             mc = getattr(meas, "measurement_chain", None)
             if mc is not None:
                 info["_measurement_chain"] = mc
+                info["chain"] = _describe_measurement_chain(mc)
             state.measurements[key] = info
         return
 
@@ -256,6 +258,117 @@ def _describe_time_series(name: str, value: Any) -> dict:
         info["extraction_error"] = str(e)
 
     return info
+
+
+def _describe_measurement_chain(mc) -> dict:
+    """Extract full measurement chain details from a weldx MeasurementChain."""
+    result = {
+        "name": getattr(mc, "_name", ""),
+        "steps": [],
+    }
+
+    # Source sensor
+    src = getattr(mc, "_source", None)
+    if src is not None:
+        src_info = {
+            "name": getattr(src, "name", ""),
+            "signal_type": getattr(getattr(src, "output_signal", None), "signal_type", ""),
+            "signal_unit": str(getattr(getattr(src, "output_signal", None), "units", "")),
+        }
+        err = getattr(src, "error", None)
+        if err is not None:
+            dev = getattr(err, "deviation", None)
+            if dev is not None:
+                src_info["error"] = str(dev)
+        result["source"] = src_info
+
+    # Source equipment
+    src_eq = getattr(mc, "_source_equipment", None)
+    if src_eq is not None:
+        result["source_equipment"] = getattr(src_eq, "name", "")
+
+    # Walk the chain graph: nodes (signal stages) and edges (transformations)
+    g = getattr(mc, "_graph", None)
+    if g is None:
+        return result
+
+    # Build ordered step list by following edges from source
+    visited = set()
+    node_order = []
+
+    def walk(node):
+        if node in visited:
+            return
+        visited.add(node)
+        node_order.append(node)
+        for _, successor in g.out_edges(node):
+            walk(successor)
+
+    # Start from the source node
+    src_name = getattr(src, "name", "") if src is not None else ""
+    if src_name in g.nodes:
+        walk(src_name)
+    else:
+        # Fallback: use topological order
+        try:
+            import networkx as nx
+            node_order = list(nx.topological_sort(g))
+        except Exception:
+            node_order = list(g.nodes)
+
+    # Extract each step
+    for i, node_name in enumerate(node_order):
+        node_data = g.nodes.get(node_name, {})
+        sig = node_data.get("signal")
+
+        step = {
+            "name": node_name,
+            "signal_type": getattr(sig, "signal_type", "") if sig else "",
+            "signal_unit": str(getattr(sig, "units", "")) if sig else "",
+        }
+
+        # Find the outgoing transformation edge
+        for _, target, edge_data in g.out_edges(node_name, data=True):
+            trafo = edge_data.get("transformation")
+            eq = edge_data.get("equipment")
+
+            if trafo is not None:
+                t_info = {"name": getattr(trafo, "name", "")}
+
+                # Transformation type (AD, calibration, etc.)
+                t_type = getattr(trafo, "type_transformation", None)
+                if t_type:
+                    t_info["type"] = str(t_type)
+
+                # Error
+                t_err = getattr(trafo, "error", None)
+                if t_err is not None:
+                    dev = getattr(t_err, "deviation", None)
+                    if dev is not None:
+                        t_info["error"] = str(dev)
+
+                # Mathematical function
+                func = getattr(trafo, "func", None)
+                if func is not None:
+                    t_info["expression"] = str(getattr(func, "expression", ""))
+                    params = getattr(func, "parameters", {})
+                    if isinstance(params, dict):
+                        t_info["parameters"] = {k: str(v) for k, v in params.items()}
+
+                # Equipment
+                if eq is not None:
+                    t_info["equipment"] = getattr(eq, "name", "")
+
+                # Software meta
+                meta = getattr(trafo, "meta", None)
+                if isinstance(meta, dict) and "name" in meta:
+                    t_info["software"] = f"{meta['name']} {meta.get('version', '')}"
+
+                step["transformation"] = t_info
+
+        result["steps"].append(step)
+
+    return result
 
 
 # ─── Extraction: Equipment / Measurement Chains ─────────────
@@ -442,20 +555,12 @@ def _extract_cs_from_csm(csm, state: WeldxFileState):
 
     names = list(csm.coordinate_system_names)
 
-    # Determine root node (node with no parent in the graph)
-    root = None
-    if hasattr(csm, "graph"):
-        g = csm.graph
-        for n in names:
-            preds = [p for p in g.predecessors(n)
-                     if g.edges[p, n].get("defined", False)]
-            if not preds:
-                root = n
-                break
+    # Determine root node
+    root = getattr(csm, "root_system_name", None)
     if root is None and names:
         root = names[0]
 
-    # Build parent map from graph edges
+    # Build parent map from defined graph edges
     parent_map = {}
     if hasattr(csm, "graph"):
         g = csm.graph
@@ -503,6 +608,68 @@ def _extract_cs_from_csm(csm, state: WeldxFileState):
             cs_info["orientation"] = np.eye(3).tolist()
 
         state.coordinate_systems[name] = cs_info
+
+    # Extract workpiece mesh data (3D scan surfaces)
+    _extract_workpiece_meshes(csm, root, state)
+
+
+def _extract_workpiece_meshes(csm, root: str, state: WeldxFileState):
+    """Extract 3D mesh data from workpiece scan nodes in the CSM graph."""
+    import warnings
+
+    if not hasattr(csm, "graph"):
+        return
+    g = csm.graph
+
+    # Look for nodes with spatial data (scan_0, scan_1, ...)
+    for node_name in csm.coordinate_system_names:
+        node_data = g.nodes.get(node_name, {}).get("data", {})
+        if not isinstance(node_data, dict):
+            continue
+
+        for scan_name, scan_obj in node_data.items():
+            if not hasattr(scan_obj, "coordinates") or not hasattr(scan_obj, "triangles"):
+                continue
+
+            try:
+                # Get vertices
+                verts = scan_obj.coordinates
+                if hasattr(verts, "magnitude"):
+                    verts = verts.magnitude
+                elif hasattr(verts, "values"):
+                    verts = verts.values
+                verts = np.asarray(verts)
+
+                # Get triangles
+                tris = scan_obj.triangles
+                if hasattr(tris, "values"):
+                    tris = tris.values
+                tris = np.asarray(tris)
+
+                # Transform vertices from node CS to root CS
+                if node_name != root:
+                    try:
+                        with warnings.catch_warnings():
+                            warnings.simplefilter("ignore")
+                            lcs = csm.get_cs(node_name, root)
+                        coords = lcs.coordinates.values
+                        if hasattr(coords, "magnitude"):
+                            coords = coords.magnitude
+                        orient = lcs.orientation.values
+                        # Apply rotation + translation
+                        R = orient[0] if orient.ndim > 2 else orient
+                        t = coords[0] if coords.ndim > 1 else coords
+                        verts = verts @ R.T + t
+                    except Exception:
+                        pass
+
+                state.workpiece_meshes.append({
+                    "name": f"{node_name}/{scan_name}",
+                    "vertices": verts,
+                    "triangles": tris,
+                })
+            except Exception:
+                continue
 
 
 def _walk_cs_graph(graph, cs_dict: dict):

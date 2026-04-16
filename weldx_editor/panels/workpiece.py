@@ -458,55 +458,85 @@ def _render_groove_tab(state):
             try:
                 import plotly.graph_objects as go
 
-                if not profile_data or len(profile_data) < 3:
+                if not shape_point_lists or len(shape_point_lists) < 1:
                     raise ValueError("Profil-Geometrie nicht extrahierbar")
 
-                # Cross-section in X (width) / Z (height), extruded along Y (seam)
-                cx = [p[0] for p in profile_data]
-                cz = [p[1] for p in profile_data]
-                seam_len = max(
-                    max(cx) - min(cx),
-                    max(cz) - min(cz),
-                ) * 3  # proportional seam length
+                # Determine seam length proportional to cross-section
+                all_x = [p[0] for spl in shape_point_lists for p in spl]
+                all_z = [p[1] for spl in shape_point_lists for p in spl]
+                seam_len = max(max(all_x) - min(all_x), max(all_z) - min(all_z)) * 3
 
                 fig3d = go.Figure()
+                plate_color = "#808080"
 
-                # Front + back face outlines
-                for y_val, name in [(0.0, "Vorderseite"), (seam_len, "Rückseite")]:
-                    fig3d.add_trace(go.Scatter3d(
-                        x=cx, y=[y_val] * len(cx), z=cz,
-                        mode="lines",
-                        line=dict(color="#4f8ef7", width=4),
-                        name=name,
-                        showlegend=False,
-                    ))
+                # Extrude each shape (plate half) as a solid body
+                for shape_pts in shape_point_lists:
+                    if len(shape_pts) < 3:
+                        continue
 
-                # Filled front + back faces
-                for y_fill in [0.0, seam_len]:
+                    # Close the polygon if not already closed
+                    pts = list(shape_pts)
+                    if pts[0] != pts[-1]:
+                        pts.append(pts[0])
+
+                    cx = [p[0] for p in pts]
+                    cz = [p[1] for p in pts]
+                    n = len(cx) - 1  # number of edges
+
+                    # Build solid extrusion mesh: front + back + side walls
+                    vx, vy, vz = [], [], []
+                    ti, tj, tk = [], [], []
+
+                    # Vertices: front face (y=0) then back face (y=seam_len)
+                    for p in pts[:-1]:
+                        vx.append(p[0]); vy.append(0.0); vz.append(p[1])
+                    for p in pts[:-1]:
+                        vx.append(p[0]); vy.append(seam_len); vz.append(p[1])
+
+                    # Front face triangulation (fan from vertex 0)
+                    for i in range(1, n - 1):
+                        ti.append(0); tj.append(i); tk.append(i + 1)
+
+                    # Back face triangulation (fan from vertex n)
+                    base = n
+                    for i in range(1, n - 1):
+                        ti.append(base); tj.append(base + i + 1); tk.append(base + i)
+
+                    # Side walls (quad per edge, split into 2 triangles)
+                    for i in range(n):
+                        i_next = (i + 1) % n
+                        f0, f1 = i, i_next           # front vertices
+                        b0, b1 = n + i, n + i_next   # back vertices
+                        ti.append(f0); tj.append(f1); tk.append(b0)
+                        ti.append(f1); tj.append(b1); tk.append(b0)
+
                     fig3d.add_trace(go.Mesh3d(
-                        x=cx, y=[y_fill] * len(cx), z=cz,
-                        color="#4f8ef7", opacity=0.15,
-                        delaunayaxis="y", showlegend=False,
+                        x=vx, y=vy, z=vz,
+                        i=ti, j=tj, k=tk,
+                        color=plate_color,
+                        opacity=1.0,
+                        flatshading=True,
+                        lighting=dict(
+                            ambient=0.35,
+                            diffuse=0.65,
+                            specular=0.4,
+                            roughness=0.5,
+                            fresnel=0.3,
+                        ),
+                        lightposition=dict(x=200, y=200, z=400),
+                        showlegend=False,
+                        hoverinfo="skip",
                     ))
 
-                # Side surface mesh (extrusion walls)
-                n = len(cx) - 1
-                wx, wy, wz = [], [], []
-                wi, wj, wk = [], [], []
-                for idx in range(n):
-                    base = len(wx)
-                    wx.extend([cx[idx], cx[idx + 1], cx[idx], cx[idx + 1]])
-                    wy.extend([0, 0, seam_len, seam_len])
-                    wz.extend([cz[idx], cz[idx + 1], cz[idx], cz[idx + 1]])
-                    wi.extend([base, base])
-                    wj.extend([base + 1, base + 2])
-                    wk.extend([base + 2, base + 3])
-                fig3d.add_trace(go.Mesh3d(
-                    x=wx, y=wy, z=wz,
-                    i=wi, j=wj, k=wk,
-                    color="#4f8ef7", opacity=0.3,
-                    showlegend=False,
-                ))
+                    # Edge outlines for clarity
+                    for y_val in [0.0, seam_len]:
+                        fig3d.add_trace(go.Scatter3d(
+                            x=cx, y=[y_val] * len(cx), z=cz,
+                            mode="lines",
+                            line=dict(color="#333333", width=2),
+                            showlegend=False,
+                            hoverinfo="skip",
+                        ))
 
                 fig3d.update_layout(
                     scene=dict(
@@ -515,9 +545,9 @@ def _render_groove_tab(state):
                         zaxis_title="Höhe [mm]",
                         aspectmode="data",
                         bgcolor="white",
-                        xaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="white"),
-                        yaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="white"),
-                        zaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="white"),
+                        xaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="#f5f5f5"),
+                        yaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="#f5f5f5"),
+                        zaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="#f5f5f5"),
                         camera=dict(
                             eye=dict(x=1.5, y=1.5, z=0.8),
                             up=dict(x=0, y=0, z=1),

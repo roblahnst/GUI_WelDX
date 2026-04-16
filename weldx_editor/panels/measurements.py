@@ -150,43 +150,113 @@ def render_measurements(state):
     with tab2:
         st.subheader("Messketten")
 
-        # Display equipment-based measurement chains from state.equipment
-        equipment = getattr(state, 'equipment', {})
-        if equipment:
-            st.success(f"✅ {len(equipment)} Messkette(n) aus Datei erkannt")
-            for eq_key, eq_info in equipment.items():
+        # Collect chains from measurements (native weldx) and equipment (RoboScope)
+        chains_found = []
+        for mkey, minfo in getattr(state, 'measurements', {}).items():
+            chain = minfo.get("chain")
+            if chain and chain.get("steps"):
+                chains_found.append((mkey, minfo.get("name", mkey), chain))
+
+        if chains_found:
+            st.success(f"✅ {len(chains_found)} Messkette(n) aus Datei erkannt")
+
+            for mkey, meas_name, chain in chains_found:
                 with st.container(border=True):
-                    st.markdown(f"**{eq_info.get('name', eq_key)}**")
+                    st.markdown(f"#### {chain.get('name', meas_name)}")
 
-                    # Chain visualization
-                    sensor_name = eq_info.get("sensor_name", "Sensor")
-                    signal_unit = eq_info.get("signal_unit", "")
-                    error_val = eq_info.get("error_value", "")
-                    error_unit = eq_info.get("error_unit", "")
-                    equip_name = eq_info.get("equipment_name", "")
+                    # Source info
+                    src = chain.get("source", {})
+                    src_eq = chain.get("source_equipment", "")
+                    if src:
+                        st.markdown(
+                            f"**Quelle:** {src.get('name', '')} "
+                            f"({src.get('signal_type', '')} / {src.get('signal_unit', '')})"
+                            f" &mdash; Fehler: ±{src.get('error', '—')}"
+                            f" &mdash; Equipment: **{src_eq}**"
+                        )
 
-                    # Show chain steps if available
-                    chain_steps = eq_info.get("chain_steps", [])
-                    if chain_steps:
-                        step_names = [s["name"] for s in chain_steps]
-                        chain_display = " → ".join([f"**{s}**" for s in step_names])
-                        st.markdown(chain_display)
-                    else:
-                        st.markdown(f"**{sensor_name}** → **{equip_name}**")
+                    # Chain flow arrow
+                    steps = chain.get("steps", [])
+                    step_names = [s["name"] for s in steps]
+                    flow = " → ".join([f"`{s}`" for s in step_names])
+                    st.markdown(f"**Signalfluss:** {flow}")
 
-                    # Details
-                    cols = st.columns(3)
-                    with cols[0]:
-                        st.caption(f"Sensor: {sensor_name}")
-                    with cols[1]:
-                        st.caption(f"Einheit: {signal_unit}")
-                    with cols[2]:
-                        err_display = f"±{error_val} {error_unit}" if error_val else "—"
-                        st.caption(f"Fehler: {err_display}")
+                    st.markdown("")
 
-                st.markdown("")
+                    # Detailed step table
+                    for i, step in enumerate(steps):
+                        trafo = step.get("transformation")
+                        sig_type = step.get("signal_type", "")
+                        sig_unit = step.get("signal_unit", "")
+
+                        col_step, col_detail = st.columns([1, 3])
+
+                        with col_step:
+                            badge = "🟢" if sig_type == "digital" else "🔵"
+                            st.markdown(f"{badge} **{step['name']}**")
+                            if sig_type or sig_unit:
+                                st.caption(f"{sig_type} / {sig_unit}" if sig_unit else sig_type)
+
+                        with col_detail:
+                            if trafo:
+                                # Transformation details
+                                t_name = trafo.get("name", "")
+                                t_type = trafo.get("type", "")
+                                expr = trafo.get("expression", "")
+                                params = trafo.get("parameters", {})
+                                error = trafo.get("error", "")
+                                eq_name = trafo.get("equipment", "")
+                                sw = trafo.get("software", "")
+
+                                type_badge = f" `{t_type}`" if t_type else ""
+                                st.markdown(f"↓ **{t_name}**{type_badge}")
+
+                                detail_parts = []
+                                if expr:
+                                    params_str = ", ".join(f"{k}={v}" for k, v in params.items())
+                                    detail_parts.append(f"`{expr}` ({params_str})")
+                                if error and error != "0.0":
+                                    detail_parts.append(f"Fehler: ±{error}")
+                                if eq_name:
+                                    detail_parts.append(f"Equipment: {eq_name}")
+                                if sw:
+                                    detail_parts.append(f"Software: {sw}")
+
+                                if detail_parts:
+                                    st.caption(" · ".join(detail_parts))
+                            elif i < len(steps) - 1:
+                                st.markdown("↓")
+
+                    st.markdown("")
         else:
-            st.info("Keine Messketten in der Datei gefunden.")
+            # Fallback: show equipment-based chains (RoboScope format)
+            equipment = getattr(state, 'equipment', {})
+            if equipment:
+                st.success(f"✅ {len(equipment)} Messkette(n) aus Datei erkannt")
+                for eq_key, eq_info in equipment.items():
+                    with st.container(border=True):
+                        st.markdown(f"**{eq_info.get('name', eq_key)}**")
+                        sensor_name = eq_info.get("sensor_name", "Sensor")
+                        signal_unit = eq_info.get("signal_unit", "")
+                        error_val = eq_info.get("error_value", "")
+                        error_unit = eq_info.get("error_unit", "")
+                        equip_name = eq_info.get("equipment_name", "")
+                        chain_steps = eq_info.get("chain_steps", [])
+                        if chain_steps:
+                            step_names = [s["name"] for s in chain_steps]
+                            st.markdown(" → ".join([f"**{s}**" for s in step_names]))
+                        else:
+                            st.markdown(f"**{sensor_name}** → **{equip_name}**")
+                        cols = st.columns(3)
+                        with cols[0]:
+                            st.caption(f"Sensor: {sensor_name}")
+                        with cols[1]:
+                            st.caption(f"Einheit: {signal_unit}")
+                        with cols[2]:
+                            err_display = f"±{error_val} {error_unit}" if error_val else "—"
+                            st.caption(f"Fehler: {err_display}")
+            else:
+                st.info("Keine Messketten in der Datei gefunden.")
 
         # Add new measurement chain
         st.subheader("Neue Messkette hinzufügen")
