@@ -308,65 +308,140 @@ def render_measurements(state):
     with tab3:
         st.subheader("Sensorik & Equipment")
 
-        # Add new sensor form
-        st.write("**Neuen Sensor hinzufügen:**")
-        with st.form("add_sensor_form", border=False):
-            col1, col2 = st.columns(2)
-            with col1:
-                sensor_name = st.text_input("Name", key="sensor_name")
-                manufacturer = st.text_input("Hersteller", key="sensor_manufacturer")
-            with col2:
-                model = st.text_input("Modell", key="sensor_model")
-                serial = st.text_input("Seriennummer", key="sensor_serial")
+        # ── Equipment from file (extracted during import) ──
+        equipment = getattr(state, 'equipment', {})
 
-            col3, col4 = st.columns(2)
-            with col3:
-                min_range = st.number_input("Messbereich (min)", key="sensor_min_range", value=0.0)
-            with col4:
-                max_range = st.number_input("Messbereich (max)", key="sensor_max_range", value=100.0)
+        # Also collect equipment from measurement chains
+        chain_equipment = {}
+        for mkey, minfo in getattr(state, 'measurements', {}).items():
+            chain = minfo.get("chain")
+            if not chain:
+                continue
+            # Source equipment
+            src_eq = chain.get("source_equipment", "")
+            src = chain.get("source", {})
+            if src_eq and src_eq not in chain_equipment:
+                chain_equipment[src_eq] = {
+                    "name": src_eq,
+                    "sources": [src] if src else [],
+                    "used_by": [minfo.get("name", mkey)],
+                }
+            elif src_eq and src_eq in chain_equipment:
+                chain_equipment[src_eq]["used_by"].append(minfo.get("name", mkey))
 
-            accuracy = st.number_input("Genauigkeit (%)", key="sensor_accuracy", value=1.0, min_value=0.0)
-
-            if st.form_submit_button("Sensor speichern"):
-                if sensor_name:
-                    if 'sensors' not in state.measurements:
-                        state.measurements['sensors'] = []
-
-                    sensor_data = {
-                        'name': sensor_name,
-                        'manufacturer': manufacturer,
-                        'model': model,
-                        'serial': serial,
-                        'min_range': min_range,
-                        'max_range': max_range,
-                        'accuracy': accuracy
+            # Equipment from transformation steps
+            for step in chain.get("steps", []):
+                trafo = step.get("transformation", {})
+                eq_name = trafo.get("equipment", "")
+                if eq_name and eq_name not in chain_equipment:
+                    chain_equipment[eq_name] = {
+                        "name": eq_name,
+                        "sources": [],
+                        "role": trafo.get("name", ""),
+                        "used_by": [minfo.get("name", mkey)],
                     }
+                elif eq_name and eq_name in chain_equipment:
+                    if minfo.get("name", mkey) not in chain_equipment[eq_name].get("used_by", []):
+                        chain_equipment[eq_name].setdefault("used_by", []).append(minfo.get("name", mkey))
 
-                    # Check if sensor already exists
-                    if not any(s.get('name') == sensor_name for s in state.measurements.get('sensors', [])):
-                        state.measurements.setdefault('sensors', []).append(sensor_data)
-                        st.success(f"Sensor '{sensor_name}' hinzugefügt!")
-                    else:
-                        st.warning(f"Sensor '{sensor_name}' existiert bereits.")
-                else:
-                    st.error("Bitte geben Sie einen Sensornamen ein.")
+        # Merge: prefer chain_equipment (richer info), then state.equipment
+        all_equipment = dict(chain_equipment)
+        for eq_key, eq_info in equipment.items():
+            name = eq_info.get("name", eq_key)
+            if name not in all_equipment:
+                all_equipment[name] = eq_info
 
-        st.divider()
+        if all_equipment:
+            st.success(f"✅ {len(all_equipment)} Gerät(e) aus Datei erkannt")
 
-        # Display existing sensors
-        st.write("**Vorhandene Sensoren:**")
-        sensors = state.measurements.get('sensors', [])
-        if sensors:
-            for sensor in sensors:
+            for eq_name, eq_info in all_equipment.items():
                 with st.container(border=True):
-                    col1, col2, col3 = st.columns([2, 2, 1])
+                    st.markdown(f"#### {eq_info.get('name', eq_name)}")
+
+                    col1, col2 = st.columns(2)
+
                     with col1:
-                        st.markdown(f"**{sensor.get('name', 'N/A')}**")
-                        st.caption(f"{sensor.get('manufacturer', 'N/A')} - {sensor.get('model', 'N/A')}")
+                        # Sources
+                        sources = eq_info.get("sources", [])
+                        if sources:
+                            st.markdown("**Signalquellen:**")
+                            for src in sources:
+                                if isinstance(src, dict):
+                                    src_name = src.get("name", "")
+                                    sig_type = src.get("signal_type", "")
+                                    sig_unit = src.get("signal_unit", "")
+                                    err = src.get("error", "")
+                                    parts = []
+                                    if sig_type:
+                                        parts.append(sig_type)
+                                    if sig_unit:
+                                        parts.append(sig_unit)
+                                    sig_str = " / ".join(parts) if parts else ""
+                                    err_str = f", Fehler: ±{err}" if err else ""
+                                    st.caption(f"• {src_name} ({sig_str}{err_str})")
+
+                        # Role in chain
+                        role = eq_info.get("role", "")
+                        if role:
+                            st.caption(f"Funktion: {role}")
+
                     with col2:
-                        st.text(f"SN: {sensor.get('serial', 'N/A')}")
-                        st.text(f"Bereich: {sensor.get('min_range', 0):.1f} - {sensor.get('max_range', 100):.1f}")
-                    with col3:
-                        st.text(f"Genauigkeit: {sensor.get('accuracy', 0):.1f}%")
+                        # Used by which measurements
+                        used_by = eq_info.get("used_by", [])
+                        if used_by:
+                            st.markdown("**Verwendet in:**")
+                            for m_name in used_by:
+                                st.caption(f"• {m_name}")
+
+                        # Has chain info
+                        has_chain = eq_info.get("has_chain", False)
+                        if has_chain:
+                            st.caption("Messkette vorhanden")
+
+            st.divider()
         else:
-            st.info("Noch keine Sensoren hinzugefügt.")
+            st.info("Keine Sensorik/Equipment in der Datei gefunden.")
+            st.divider()
+
+        # ── Manual sensor entry ──
+        st.subheader("Neuen Sensor hinzufügen")
+        with st.expander("➕ Sensor manuell hinzufügen"):
+            with st.form("add_sensor_form", border=False):
+                col1, col2 = st.columns(2)
+                with col1:
+                    sensor_name = st.text_input("Name", key="sensor_name")
+                    manufacturer = st.text_input("Hersteller", key="sensor_manufacturer")
+                with col2:
+                    model = st.text_input("Modell", key="sensor_model")
+                    serial = st.text_input("Seriennummer", key="sensor_serial")
+
+                col3, col4 = st.columns(2)
+                with col3:
+                    min_range = st.number_input("Messbereich (min)", key="sensor_min_range", value=0.0)
+                with col4:
+                    max_range = st.number_input("Messbereich (max)", key="sensor_max_range", value=100.0)
+
+                accuracy = st.number_input("Genauigkeit (%)", key="sensor_accuracy", value=1.0, min_value=0.0)
+
+                if st.form_submit_button("Sensor speichern"):
+                    if sensor_name:
+                        if 'sensors' not in state.measurements:
+                            state.measurements['sensors'] = []
+
+                        sensor_data = {
+                            'name': sensor_name,
+                            'manufacturer': manufacturer,
+                            'model': model,
+                            'serial': serial,
+                            'min_range': min_range,
+                            'max_range': max_range,
+                            'accuracy': accuracy
+                        }
+
+                        if not any(s.get('name') == sensor_name for s in state.measurements.get('sensors', [])):
+                            state.measurements.setdefault('sensors', []).append(sensor_data)
+                            st.success(f"Sensor '{sensor_name}' hinzugefügt!")
+                        else:
+                            st.warning(f"Sensor '{sensor_name}' existiert bereits.")
+                    else:
+                        st.error("Bitte geben Sie einen Sensornamen ein.")
