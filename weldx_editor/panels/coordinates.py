@@ -271,14 +271,22 @@ def _render_3d_visualization(state):
     fig = go.Figure()
 
     # ── Workpiece mesh (3D scan surfaces) ──
+    _MAX_TRIS = 20_000  # browser-friendly triangle budget per mesh
     for mesh in meshes:
         verts = mesh["vertices"]
         tris = mesh["triangles"]
 
-        # Downsample large meshes for browser performance
-        if tris.shape[0] > 200_000:
-            step = max(1, tris.shape[0] // 200_000)
+        # Downsample triangles and reindex vertices for browser performance
+        if tris.shape[0] > _MAX_TRIS:
+            step = max(1, tris.shape[0] // _MAX_TRIS)
             tris = tris[::step]
+
+        # Keep only referenced vertices (avoids sending 277k when only 50k used)
+        used = np.unique(tris)
+        remap = np.full(verts.shape[0], -1, dtype=np.int64)
+        remap[used] = np.arange(len(used))
+        verts = verts[used]
+        tris = remap[tris]
 
         fig.add_trace(go.Mesh3d(
             x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
@@ -310,7 +318,7 @@ def _render_3d_visualization(state):
             if not is_tcp:
                 continue
             n = traj.shape[0]
-            step = max(1, n // 2000)
+            step = max(1, n // 500)
             sampled = traj[::step]
             fig.add_trace(go.Scatter3d(
                 x=sampled[:, 0], y=sampled[:, 1], z=sampled[:, 2],
