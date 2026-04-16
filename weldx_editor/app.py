@@ -214,7 +214,7 @@ def render_file_upload():
         # Demo mode
         st.markdown("#### Demo-Modus")
         if st.button("🎯 Mit Demo-Daten starten", use_container_width=True):
-            state = _create_demo_state()
+            state = _load_demo_file()
             st.session_state.state = state
             st.session_state.file_loaded = True
             st.rerun()
@@ -248,69 +248,15 @@ def render_file_upload():
         )
 
 
-def _create_demo_state() -> WeldxFileState:
-    """Create a demo state with sample data for testing."""
-    state = WeldxFileState(file_path="demo_experiment.weldx")
-
-    # Simulate RoboScope measurement data
-    state.measurements = {
-        "welding_current": {
-            "name": "welding_current",
-            "status": "present",
-            "type": "TimeSeries",
-            "samples": 24000,
-            "unit": "A",
-            "min": 120.3,
-            "max": 185.7,
-            "range": "120.3-185.7",
-        },
-        "welding_voltage": {
-            "name": "welding_voltage",
-            "status": "present",
-            "type": "TimeSeries",
-            "samples": 24000,
-            "unit": "V",
-            "min": 18.2,
-            "max": 24.1,
-            "range": "18.2-24.1",
-        },
-        "wire_feed_speed": {
-            "name": "wire_feed_speed",
-            "status": "present",
-            "type": "TimeSeries",
-            "samples": 24000,
-            "unit": "m/min",
-            "min": 4.2,
-            "max": 6.8,
-            "range": "4.2-6.8",
-        },
-    }
-
-    # Simulate some coordinate systems
-    state.coordinate_systems = {
-        "robot_base": {"name": "robot_base", "status": "present"},
-        "tcp": {"name": "tcp", "status": "present"},
-    }
-
-    # Metadata from RoboScope export
-    state.metadata = {
-        "experiment_date": "2026-03-20T14:30:00",
-        "operator": "R. Lahnsteiner",
-        "roboscope_version": "2.4.1",
-        "sampling_rate": "1000 Hz",
-        "welding_duration": "24.0 s",
-    }
-
-    # Update completion
-    state.completion = {
-        "workpiece": {"status": "missing", "detail": "Material, Naht, Geometrie fehlen"},
-        "process": {"status": "partial", "detail": "Messdaten vorhanden, Prozess-Typ fehlt"},
-        "measurements": {"status": "complete", "detail": "3 Zeitreihen (Strom, Spannung, Drahtvorschub)"},
-        "coordinates": {"status": "partial", "detail": "Robot-Base & TCP vorhanden, Werkstück fehlt"},
-        "quality": {"status": "missing", "detail": "Keine Bewertungsgruppe definiert"},
-    }
-
-    return state
+def _load_demo_file() -> WeldxFileState:
+    """Load the bundled demo file (single_pass_weld.weldx)."""
+    demo_path = Path(__file__).resolve().parent.parent / "single_pass_weld.weldx"
+    if not demo_path.exists():
+        raise FileNotFoundError(
+            f"Demo-Datei nicht gefunden: {demo_path}\n"
+            "Bitte single_pass_weld.weldx ins Projektverzeichnis kopieren."
+        )
+    return load_weldx_file(str(demo_path))
 
 
 def _save_file(state: WeldxFileState):

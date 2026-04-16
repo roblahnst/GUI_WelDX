@@ -41,6 +41,15 @@ except ImportError:
     WELDX_AVAILABLE = False
 
 
+def _safe_float(val) -> float:
+    """Convert a scalar, 0-d or 1-element array/Quantity to Python float."""
+    if hasattr(val, "magnitude"):
+        val = val.magnitude
+    if isinstance(val, np.ndarray):
+        return float(val.flat[0]) if val.size > 0 else 0.0
+    return float(val)
+
+
 @dataclass
 class WeldxFileState:
     """Holds the complete state of a WeldX file being edited."""
@@ -86,7 +95,7 @@ def load_weldx_file(file_path: str) -> WeldxFileState:
         raise ImportError("weldx package is not installed")
 
     state = WeldxFileState(file_path=file_path)
-    wx = WeldxFile(file_path, mode="rw")
+    wx = WeldxFile(file_path, mode="r")
     state.wx_file = wx
     state.tree = dict(wx)
 
@@ -400,7 +409,7 @@ def _extract_equipment(state: WeldxFileState):
                     if err is not None:
                         dev = getattr(err, "deviation", None)
                         if dev is not None and hasattr(dev, "magnitude"):
-                            src_entry["error_value"] = float(dev.magnitude)
+                            src_entry["error_value"] = _safe_float(dev)
                             src_entry["error_unit"] = str(dev.units)
                     eq_info["sources"].append(src_entry)
                 eq_info["has_chain"] = True
@@ -430,7 +439,7 @@ def _extract_equipment(state: WeldxFileState):
                 if err is not None:
                     dev = getattr(err, "deviation", None)
                     if dev is not None and hasattr(dev, "magnitude"):
-                        src_entry["error_value"] = float(dev.magnitude)
+                        src_entry["error_value"] = _safe_float(dev)
                         src_entry["error_unit"] = str(dev.units)
                 eq_info["sources"].append(src_entry)
 
@@ -763,7 +772,7 @@ def _groove_obj_to_dict(groove_obj) -> dict:
         try:
             for pname, pval in groove_obj.parameters().items():
                 if hasattr(pval, "magnitude"):
-                    params[pname] = float(pval.magnitude)
+                    params[pname] = _safe_float(pval)
                 else:
                     params[pname] = pval
             result["params"] = params
@@ -776,7 +785,7 @@ def _groove_obj_to_dict(groove_obj) -> dict:
         val = getattr(groove_obj, attr, None)
         if val is not None:
             if hasattr(val, "magnitude"):
-                params[attr] = float(val.magnitude)
+                params[attr] = _safe_float(val)
             else:
                 params[attr] = val
     if params:
@@ -841,7 +850,7 @@ def _extract_process(state: WeldxFileState):
                 for comp in (gas_comps if isinstance(gas_comps, list) else []):
                     pct = getattr(comp, "gas_percentage", None)
                     if pct is not None and hasattr(pct, "magnitude"):
-                        pct_val = float(pct.magnitude)
+                        pct_val = _safe_float(pct)
                     elif pct is not None:
                         pct_val = pct
                     else:
@@ -854,7 +863,7 @@ def _extract_process(state: WeldxFileState):
             flowrate = getattr(sg, "torch_shielding_gas_flowrate", None)
             if flowrate is not None:
                 if hasattr(flowrate, "magnitude"):
-                    gas_info["flowrate_value"] = float(flowrate.magnitude)
+                    gas_info["flowrate_value"] = _safe_float(flowrate)
                     gas_info["flowrate_unit"] = str(flowrate.units)
                 elif isinstance(flowrate, dict):
                     gas_info["flowrate_value"] = flowrate.get("value", "")
@@ -888,7 +897,7 @@ def _extract_process(state: WeldxFileState):
                 for pname, pval in params.items():
                     if hasattr(pval, "data") and hasattr(pval.data, "magnitude"):
                         proc_params[pname] = {
-                            "value": float(pval.data.magnitude),
+                            "value": _safe_float(pval.data),
                             "unit": str(pval.data.units),
                         }
                     elif hasattr(pval, "value"):
@@ -911,7 +920,7 @@ def _extract_process(state: WeldxFileState):
             if "diameter" in ww:
                 d = ww["diameter"]
                 if hasattr(d, "magnitude"):
-                    fm["diameter"] = float(d.magnitude)
+                    fm["diameter"] = _safe_float(d)
                     fm["diameter_unit"] = str(d.units)
                 elif isinstance(d, dict):
                     fm["diameter"] = d.get("value", "")
