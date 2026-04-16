@@ -245,72 +245,126 @@ MATERIALS_DB = {
 }
 
 GROOVE_TYPES = {
-    "V-Naht": ["alpha", "b", "c"],
-    "I-Naht": ["b"],
-    "HV-Naht": ["beta", "b", "c"],
-    "U-Naht": ["beta", "R", "c", "b"],
-    "X-Naht (Doppel-V)": ["alpha_1", "alpha_2", "c", "b"],
+    "V-Naht":               ["alpha", "b", "c"],
+    "I-Naht":               ["b"],
+    "HV-Naht":              ["beta", "b", "c"],
+    "U-Naht":               ["beta", "R", "c", "b"],
+    "HU-Naht":              ["beta", "R", "c", "b"],
+    "VV-Naht (V + HV)":     ["alpha", "beta", "h", "c", "b"],
+    "UV-Naht (U + HV)":     ["alpha", "beta", "R", "h", "b"],
+    "X-Naht (Doppel-V)":    ["alpha_1", "alpha_2", "h1", "h2", "c", "b"],
+    "Doppel-HV-Naht":       ["beta_1", "beta_2", "h1", "h2", "c", "b"],
+    "Doppel-U-Naht":        ["beta_1", "beta_2", "R", "R2", "h1", "h2", "c", "b"],
+    "Doppel-HU-Naht":       ["beta_1", "beta_2", "R", "R2", "h1", "h2", "c", "b"],
+    "Bördelnaht":           ["t_1", "t_2", "alpha", "b", "e", "code_number"],
+    "Kehlnaht":             ["t_1", "t_2", "alpha", "b", "e", "code_number"],
 }
 
 
 
 def _get_groove_object(groove_type: str, params: dict):
-    """
-    Create a WeldX groove object using the ISO 9692-1 API.
-
-    Groove classes and their weldx parameters:
-      VGroove:  t, alpha (groove_angle), c (root_face), b (root_gap)
-      IGroove:  t, b (root_gap)
-      HVGroove: t, beta (bevel_angle), c (root_face), b (root_gap)
-      UGroove:  t, beta (bevel_angle), R (bevel_radius), c (root_face), b (root_gap)
-      DVGroove: t, alpha_1 (groove_angle), alpha_2 (groove_angle2), c (root_face), b (root_gap)
-    """
+    """Create a WeldX groove object using the ISO 9692-1 API."""
     try:
         from weldx import Q_
         from weldx.welding.groove.iso_9692_1 import get_groove
+        from weldx.welding.groove import iso_9692_1
 
         t = Q_(params.get("t", 10), "mm")
 
         if groove_type == "V-Naht":
-            return get_groove(
-                groove_type="VGroove",
-                workpiece_thickness=t,
+            return get_groove(groove_type="VGroove", workpiece_thickness=t,
                 groove_angle=Q_(params.get("alpha", 60), "deg"),
                 root_face=Q_(params.get("c", 1), "mm"),
-                root_gap=Q_(params.get("b", 2), "mm"),
-            )
+                root_gap=Q_(params.get("b", 2), "mm"))
+
         elif groove_type == "I-Naht":
-            return get_groove(
-                groove_type="IGroove",
-                workpiece_thickness=t,
-                root_gap=Q_(params.get("b", 2), "mm"),
-            )
+            return get_groove(groove_type="IGroove", workpiece_thickness=t,
+                root_gap=Q_(params.get("b", 2), "mm"))
+
         elif groove_type == "HV-Naht":
-            return get_groove(
-                groove_type="HVGroove",
-                workpiece_thickness=t,
+            return get_groove(groove_type="HVGroove", workpiece_thickness=t,
                 bevel_angle=Q_(params.get("beta", 50), "deg"),
                 root_face=Q_(params.get("c", 1), "mm"),
-                root_gap=Q_(params.get("b", 2), "mm"),
-            )
+                root_gap=Q_(params.get("b", 2), "mm"))
+
         elif groove_type == "U-Naht":
-            return get_groove(
-                groove_type="UGroove",
-                workpiece_thickness=t,
+            return get_groove(groove_type="UGroove", workpiece_thickness=t,
                 bevel_angle=Q_(params.get("beta", 8), "deg"),
                 bevel_radius=Q_(params.get("R", 6), "mm"),
                 root_face=Q_(params.get("c", 1), "mm"),
-                root_gap=Q_(params.get("b", 2), "mm"),
-            )
+                root_gap=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type == "HU-Naht":
+            return get_groove(groove_type="HUGroove", workpiece_thickness=t,
+                bevel_angle=Q_(params.get("beta", 8), "deg"),
+                bevel_radius=Q_(params.get("R", 6), "mm"),
+                root_face=Q_(params.get("c", 1), "mm"),
+                root_gap=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type == "VV-Naht (V + HV)":
+            # VVGroove needs direct construction (get_groove doesn't map 'h')
+            return iso_9692_1.VVGroove(t=t,
+                alpha=Q_(params.get("alpha", 60), "deg"),
+                beta=Q_(params.get("beta", 10), "deg"),
+                h=Q_(params.get("h", 4), "mm"),
+                c=Q_(params.get("c", 1), "mm"),
+                b=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type == "UV-Naht (U + HV)":
+            return get_groove(groove_type="UVGroove", workpiece_thickness=t,
+                groove_angle=Q_(params.get("alpha", 60), "deg"),
+                bevel_angle=Q_(params.get("beta", 8), "deg"),
+                bevel_radius=Q_(params.get("R", 6), "mm"),
+                special_depth=Q_(params.get("h", 4), "mm"),
+                root_gap=Q_(params.get("b", 2), "mm"))
+
         elif groove_type == "X-Naht (Doppel-V)":
-            return get_groove(
-                groove_type="DVGroove",
-                workpiece_thickness=t,
+            return get_groove(groove_type="DVGroove", workpiece_thickness=t,
                 groove_angle=Q_(params.get("alpha_1", 50), "deg"),
                 groove_angle2=Q_(params.get("alpha_2", 60), "deg"),
                 root_face=Q_(params.get("c", 2), "mm"),
-                root_gap=Q_(params.get("b", 2), "mm"),
+                special_depth=Q_(params.get("h1", 0), "mm") if params.get("h1") else None,
+                root_gap=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type == "Doppel-HV-Naht":
+            return get_groove(groove_type="DHVGroove", workpiece_thickness=t,
+                bevel_angle=Q_(params.get("beta_1", 50), "deg"),
+                bevel_angle2=Q_(params.get("beta_2", 60), "deg"),
+                root_face=Q_(params.get("c", 2), "mm"),
+                special_depth=Q_(params.get("h1", 0), "mm") if params.get("h1") else None,
+                root_gap=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type == "Doppel-U-Naht":
+            return get_groove(groove_type="DUGroove", workpiece_thickness=t,
+                bevel_angle=Q_(params.get("beta_1", 8), "deg"),
+                bevel_angle2=Q_(params.get("beta_2", 10), "deg"),
+                bevel_radius=Q_(params.get("R", 6), "mm"),
+                bevel_radius2=Q_(params.get("R2", 6), "mm"),
+                root_face=Q_(params.get("c", 2), "mm"),
+                special_depth=Q_(params.get("h1", 0), "mm") if params.get("h1") else None,
+                root_gap=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type == "Doppel-HU-Naht":
+            return get_groove(groove_type="DHUGroove", workpiece_thickness=t,
+                bevel_angle=Q_(params.get("beta_1", 8), "deg"),
+                bevel_angle2=Q_(params.get("beta_2", 10), "deg"),
+                bevel_radius=Q_(params.get("R", 6), "mm"),
+                bevel_radius2=Q_(params.get("R2", 6), "mm"),
+                root_face=Q_(params.get("c", 2), "mm"),
+                special_depth=Q_(params.get("h1", 0), "mm") if params.get("h1") else None,
+                root_gap=Q_(params.get("b", 2), "mm"))
+
+        elif groove_type in ("Bördelnaht", "Kehlnaht"):
+            code = params.get("code_number", "1.12" if groove_type == "Bördelnaht" else "3.1.2")
+            return iso_9692_1.FFGroove(
+                t_1=Q_(params.get("t_1", 3), "mm"),
+                t_2=Q_(params.get("t_2", 3), "mm"),
+                alpha=Q_(params.get("alpha", 12 if groove_type == "Bördelnaht" else 45), "deg"),
+                b=Q_(params.get("b", 1), "mm"),
+                e=Q_(params.get("e", 2), "mm"),
+                code_number=code,
             )
+
         return None
     except ImportError:
         return None
@@ -442,8 +496,12 @@ def _render_groove_tab(state):
     )
 
     if isinstance(state.groove, dict):
+        # Reset params when groove type changes
+        old_type = state.groove.get("type")
         state.groove["type"] = groove_type
-        if "params" not in state.groove:
+        if old_type != groove_type:
+            state.groove["params"] = {}
+        elif "params" not in state.groove:
             state.groove["params"] = {}
     else:
         state.groove = {"type": groove_type, "params": {}}
@@ -451,8 +509,6 @@ def _render_groove_tab(state):
     # Render parameter inputs based on groove type
     st.markdown("**Parameter:**")
     params = state.groove.get("params", {})
-    # Ensure all param values are float (JSON restore may yield int)
-    params = {k: float(v) if isinstance(v, (int, float)) else v for k, v in params.items()}
 
     if groove_type == "V-Naht":
         alpha = st.number_input(
@@ -582,6 +638,129 @@ def _render_groove_tab(state):
             step=0.5,
         )
         params = {"alpha_1": alpha_1, "alpha_2": alpha_2, "c": c, "b": b}
+
+    elif groove_type == "HU-Naht":
+        beta = st.number_input("Flankenwinkel beta (deg):", min_value=0.0, max_value=45.0, value=params.get("beta", 8.0), step=1.0)
+        R = st.number_input("Radius R (mm):", min_value=1.0, max_value=30.0, value=params.get("R", 6.0), step=0.5)
+        c = st.number_input("Steg c (mm):", min_value=0.0, max_value=10.0, value=params.get("c", 1.0), step=0.5)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=20.0, value=params.get("b", 2.0), step=0.5)
+        params = {"beta": beta, "R": R, "c": c, "b": b}
+
+    elif groove_type == "VV-Naht (V + HV)":
+        col1, col2 = st.columns(2)
+        with col1:
+            alpha = st.number_input("Nutwinkel alpha (deg):", min_value=10.0, max_value=90.0, value=params.get("alpha", 60.0), step=1.0)
+        with col2:
+            beta = st.number_input("Flankenwinkel beta (deg):", min_value=5.0, max_value=90.0, value=params.get("beta", 10.0), step=1.0)
+        h = st.number_input("Tiefe h (mm):", min_value=0.5, max_value=50.0, value=params.get("h", 4.0), step=0.5, help="Tiefe des V-Anteils")
+        c = st.number_input("Steg c (mm):", min_value=0.0, max_value=10.0, value=params.get("c", 1.0), step=0.5)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=20.0, value=params.get("b", 2.0), step=0.5)
+        params = {"alpha": alpha, "beta": beta, "h": h, "c": c, "b": b}
+
+    elif groove_type == "UV-Naht (U + HV)":
+        col1, col2 = st.columns(2)
+        with col1:
+            alpha = st.number_input("Nutwinkel alpha (deg):", min_value=10.0, max_value=90.0, value=params.get("alpha", 60.0), step=1.0)
+        with col2:
+            beta = st.number_input("Flankenwinkel beta (deg):", min_value=0.0, max_value=45.0, value=params.get("beta", 8.0), step=1.0)
+        R = st.number_input("Radius R (mm):", min_value=1.0, max_value=30.0, value=params.get("R", 6.0), step=0.5)
+        h = st.number_input("Tiefe h (mm):", min_value=0.5, max_value=50.0, value=params.get("h", 4.0), step=0.5, help="Tiefe des U-Anteils")
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=20.0, value=params.get("b", 2.0), step=0.5)
+        params = {"alpha": alpha, "beta": beta, "R": R, "h": h, "b": b}
+
+    elif groove_type == "Doppel-HV-Naht":
+        col1, col2 = st.columns(2)
+        with col1:
+            beta_1 = st.number_input("Winkel oben beta_1 (deg):", min_value=5.0, max_value=90.0, value=params.get("beta_1", 50.0), step=1.0)
+        with col2:
+            beta_2 = st.number_input("Winkel unten beta_2 (deg):", min_value=5.0, max_value=90.0, value=params.get("beta_2", 60.0), step=1.0)
+        col3, col4 = st.columns(2)
+        with col3:
+            h1 = st.number_input("Tiefe oben h1 (mm):", min_value=0.0, max_value=50.0, value=params.get("h1", 0.0), step=0.5, help="0 = automatisch")
+        with col4:
+            h2 = st.number_input("Tiefe unten h2 (mm):", min_value=0.0, max_value=50.0, value=params.get("h2", 0.0), step=0.5, help="0 = automatisch")
+        c = st.number_input("Steg c (mm):", min_value=0.0, max_value=10.0, value=params.get("c", 2.0), step=0.5)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=20.0, value=params.get("b", 2.0), step=0.5)
+        params = {"beta_1": beta_1, "beta_2": beta_2, "h1": h1, "h2": h2, "c": c, "b": b}
+
+    elif groove_type == "Doppel-U-Naht":
+        col1, col2 = st.columns(2)
+        with col1:
+            beta_1 = st.number_input("Winkel oben beta_1 (deg):", min_value=0.0, max_value=45.0, value=params.get("beta_1", 8.0), step=1.0)
+        with col2:
+            beta_2 = st.number_input("Winkel unten beta_2 (deg):", min_value=0.0, max_value=45.0, value=params.get("beta_2", 10.0), step=1.0)
+        col3, col4 = st.columns(2)
+        with col3:
+            R = st.number_input("Radius oben R (mm):", min_value=1.0, max_value=30.0, value=params.get("R", 6.0), step=0.5)
+        with col4:
+            R2 = st.number_input("Radius unten R2 (mm):", min_value=1.0, max_value=30.0, value=params.get("R2", 6.0), step=0.5)
+        col5, col6 = st.columns(2)
+        with col5:
+            h1 = st.number_input("Tiefe oben h1 (mm):", min_value=0.0, max_value=50.0, value=params.get("h1", 0.0), step=0.5, help="0 = automatisch")
+        with col6:
+            h2 = st.number_input("Tiefe unten h2 (mm):", min_value=0.0, max_value=50.0, value=params.get("h2", 0.0), step=0.5, help="0 = automatisch")
+        c = st.number_input("Steg c (mm):", min_value=0.0, max_value=10.0, value=params.get("c", 2.0), step=0.5)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=20.0, value=params.get("b", 2.0), step=0.5)
+        params = {"beta_1": beta_1, "beta_2": beta_2, "R": R, "R2": R2, "h1": h1, "h2": h2, "c": c, "b": b}
+
+    elif groove_type == "Doppel-HU-Naht":
+        col1, col2 = st.columns(2)
+        with col1:
+            beta_1 = st.number_input("Winkel oben beta_1 (deg):", min_value=0.0, max_value=45.0, value=params.get("beta_1", 8.0), step=1.0)
+        with col2:
+            beta_2 = st.number_input("Winkel unten beta_2 (deg):", min_value=0.0, max_value=45.0, value=params.get("beta_2", 10.0), step=1.0)
+        col3, col4 = st.columns(2)
+        with col3:
+            R = st.number_input("Radius oben R (mm):", min_value=1.0, max_value=30.0, value=params.get("R", 6.0), step=0.5)
+        with col4:
+            R2 = st.number_input("Radius unten R2 (mm):", min_value=1.0, max_value=30.0, value=params.get("R2", 6.0), step=0.5)
+        col5, col6 = st.columns(2)
+        with col5:
+            h1 = st.number_input("Tiefe oben h1 (mm):", min_value=0.0, max_value=50.0, value=params.get("h1", 0.0), step=0.5, help="0 = automatisch")
+        with col6:
+            h2 = st.number_input("Tiefe unten h2 (mm):", min_value=0.0, max_value=50.0, value=params.get("h2", 0.0), step=0.5, help="0 = automatisch")
+        c = st.number_input("Steg c (mm):", min_value=0.0, max_value=10.0, value=params.get("c", 2.0), step=0.5)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=20.0, value=params.get("b", 2.0), step=0.5)
+        params = {"beta_1": beta_1, "beta_2": beta_2, "R": R, "R2": R2, "h1": h1, "h2": h2, "c": c, "b": b}
+
+    elif groove_type == "Bördelnaht":
+        _BOERDEL_CODES = {
+            "1.12 — beidseitig gebördelt": "1.12",
+            "1.13 — einseitig gebördelt": "1.13",
+            "2.12 — mit Spalt": "2.12",
+        }
+        code_label = st.selectbox("Stoßart (ISO 9692-1):", list(_BOERDEL_CODES.keys()))
+        code_number = _BOERDEL_CODES[code_label]
+        col1, col2 = st.columns(2)
+        with col1:
+            t_1 = st.number_input("Blechdicke 1 t_1 (mm):", min_value=0.5, max_value=20.0, value=params.get("t_1", 3.0), step=0.5)
+        with col2:
+            t_2 = st.number_input("Blechdicke 2 t_2 (mm):", min_value=0.5, max_value=20.0, value=params.get("t_2", 3.0), step=0.5)
+        alpha = st.number_input("Bördelwinkel alpha (deg):", min_value=0.0, max_value=45.0, value=params.get("alpha", 12.0), step=1.0)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=10.0, value=params.get("b", 1.0), step=0.5)
+        e = st.number_input("Überlappung e (mm):", min_value=0.0, max_value=20.0, value=params.get("e", 2.0), step=0.5)
+        params = {"t_1": t_1, "t_2": t_2, "alpha": alpha, "b": b, "e": e, "code_number": code_number}
+
+    elif groove_type == "Kehlnaht":
+        _KEHL_CODES = {
+            "3.1.1 — Überlappstoß (einseitig)": "3.1.1",
+            "3.1.2 — T-Stoß (einseitig)": "3.1.2",
+            "3.1.3 — Eckstoß (einseitig)": "3.1.3",
+            "4.1.1 — Überlappstoß (beidseitig)": "4.1.1",
+            "4.1.2 — T-Stoß (beidseitig)": "4.1.2",
+            "4.1.3 — Eckstoß (beidseitig)": "4.1.3",
+        }
+        code_label = st.selectbox("Stoßart (ISO 9692-1):", list(_KEHL_CODES.keys()))
+        code_number = _KEHL_CODES[code_label]
+        col1, col2 = st.columns(2)
+        with col1:
+            t_1 = st.number_input("Blechdicke 1 t_1 (mm):", min_value=0.5, max_value=100.0, value=params.get("t_1", 5.0), step=0.5)
+        with col2:
+            t_2 = st.number_input("Blechdicke 2 t_2 (mm):", min_value=0.5, max_value=100.0, value=params.get("t_2", 5.0), step=0.5)
+        alpha = st.number_input("Kehlnahtwinkel alpha (deg):", min_value=0.0, max_value=90.0, value=params.get("alpha", 45.0), step=1.0)
+        b = st.number_input("Spalt b (mm):", min_value=0.0, max_value=10.0, value=params.get("b", 0.0), step=0.5)
+        e = st.number_input("Nahtdicke e (mm):", min_value=0.0, max_value=30.0, value=params.get("e", 3.0), step=0.5, help="a-Maß der Kehlnaht")
+        params = {"t_1": t_1, "t_2": t_2, "alpha": alpha, "b": b, "e": e, "code_number": code_number}
 
     state.groove["params"] = params
 

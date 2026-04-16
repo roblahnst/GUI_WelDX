@@ -220,6 +220,19 @@ def _describe_time_series(name: str, value: Any) -> dict:
             if hasattr(data, "units"):
                 unit = str(data.units)
 
+            # Extract time axis from weldx TimeSeries
+            ts_time = getattr(value, "time", None)
+            if ts_time is not None:
+                try:
+                    import weldx as _wx
+                    tq = _wx.Time(ts_time).as_quantity()
+                    t_seconds = np.asarray(tq.magnitude).flatten()
+                    info["time_seconds"] = t_seconds
+                    info["time_start"] = f"{t_seconds[0]:.3f}s"
+                    info["time_end"] = f"{t_seconds[-1]:.3f}s"
+                except Exception:
+                    pass
+
         # weldx TimeSeries with data_array
         if arr is None and hasattr(value, "data_array"):
             da = value.data_array
@@ -753,11 +766,18 @@ def _extract_groove(state: WeldxFileState):
 
 
 _GROOVE_CLASS_TO_EDITOR = {
-    "VGroove": "V-Naht",
-    "IGroove": "I-Naht",
-    "HVGroove": "HV-Naht",
-    "UGroove": "U-Naht",
-    "DVGroove": "X-Naht (Doppel-V)",
+    "VGroove":   "V-Naht",
+    "IGroove":   "I-Naht",
+    "HVGroove":  "HV-Naht",
+    "UGroove":   "U-Naht",
+    "HUGroove":  "HU-Naht",
+    "VVGroove":  "VV-Naht (V + HV)",
+    "UVGroove":  "UV-Naht (U + HV)",
+    "DVGroove":  "X-Naht (Doppel-V)",
+    "DHVGroove": "Doppel-HV-Naht",
+    "DUGroove":  "Doppel-U-Naht",
+    "DHUGroove": "Doppel-HU-Naht",
+    "FFGroove":  "Bördelnaht",  # or Kehlnaht — resolved by code_number in _groove_obj_to_dict
 }
 
 
@@ -765,6 +785,17 @@ def _groove_obj_to_dict(groove_obj) -> dict:
     """Convert a weldx groove object (VGroove, etc.) to a dict for the editor."""
     class_name = type(groove_obj).__name__  # e.g. "VGroove", "IGroove"
     groove_type = _GROOVE_CLASS_TO_EDITOR.get(class_name, class_name)
+
+    # FFGroove: distinguish Bördelnaht vs Kehlnaht by code_number
+    if class_name == "FFGroove":
+        code = getattr(groove_obj, "code_number", ["1.12"])
+        if isinstance(code, list):
+            code = code[0] if code else "1.12"
+        if code.startswith(("3.", "4.")):
+            groove_type = "Kehlnaht"
+        else:
+            groove_type = "Bördelnaht"
+
     result = {"type": groove_type}
     params = {}
 
@@ -777,12 +808,21 @@ def _groove_obj_to_dict(groove_obj) -> dict:
                 else:
                     params[pname] = pval
             result["params"] = params
+            # Preserve code_number for FFGroove
+            if class_name == "FFGroove":
+                code = getattr(groove_obj, "code_number", None)
+                if isinstance(code, list):
+                    code = code[0] if code else None
+                if code:
+                    params["code_number"] = code
             return result
         except Exception:
             pass
 
     # Fallback: read known attributes directly
-    for attr in ("t", "alpha", "b", "c", "beta", "R", "alpha_1", "alpha_2"):
+    for attr in ("t", "t_1", "t_2", "alpha", "b", "c", "e",
+                 "beta", "R", "R2", "h", "h1", "h2",
+                 "alpha_1", "alpha_2", "beta_1", "beta_2"):
         val = getattr(groove_obj, attr, None)
         if val is not None:
             if hasattr(val, "magnitude"):

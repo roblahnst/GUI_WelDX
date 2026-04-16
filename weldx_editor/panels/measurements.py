@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
 from weldx_editor.utils.style import COLORS
 
 
@@ -52,97 +55,43 @@ def render_measurements(state):
 
         # Display existing measurements
         if state.measurements:
-            st.write("**Vorhandene Messungen:**")
+            # ── Combined overview plot (weldx-widgets style) ──
+            real_meas = {k: v for k, v in state.measurements.items()
+                         if "values" in v and v["values"] is not None}
+            if real_meas:
+                st.markdown("**Messübersicht:**")
+                try:
+                    _plot_measurements_overview(real_meas)
+                except Exception as e:
+                    st.warning(f"Übersichtsplot nicht möglich: {e}")
+
+            st.divider()
+
+            # ── Individual measurement details ──
+            st.write("**Einzelmessungen:**")
             for meas_name, meas_info in state.measurements.items():
-                col1, col2, col3, col4 = st.columns(4)
-                with col1:
-                    st.metric("Name", meas_name)
-                with col2:
-                    st.metric("Samples", meas_info.get('samples', 0))
-                with col3:
-                    st.metric("Unit", meas_info.get('unit', 'N/A'))
-                with col4:
-                    st.metric("Status", meas_info.get('status', 'unbekannt'))
+                with st.container(border=True):
+                    col1, col2, col3, col4 = st.columns(4)
+                    with col1:
+                        st.markdown(f"**{meas_info.get('name', meas_name)}**")
+                    with col2:
+                        st.caption(f"Samples: {meas_info.get('samples', 0):,}")
+                    with col3:
+                        st.caption(f"Einheit: {meas_info.get('unit', '—')}")
+                    with col4:
+                        mn = meas_info.get('min')
+                        mx = meas_info.get('max')
+                        if mn is not None and not isinstance(mn, str):
+                            st.caption(f"Bereich: {mn:.2f} – {mx:.2f}")
 
-                # Range display
-                min_val = meas_info.get('min', None)
-                max_val = meas_info.get('max', None)
-                range_val = meas_info.get('range', None)
-                parts = []
-                if min_val is not None and not isinstance(min_val, str):
-                    parts.append(f"Min: {min_val:.2f}")
-                if max_val is not None and not isinstance(max_val, str):
-                    parts.append(f"Max: {max_val:.2f}")
-                if range_val is not None:
-                    parts.append(f"Bereich: {range_val}")
-                range_text = ", ".join(parts) if parts else "Keine Bereichsdaten"
-                st.caption(range_text)
-
-                # Visualization expander
-                # Show outlier warning if applicable
-                n_outliers = meas_info.get("outliers_removed", 0)
-                if n_outliers > 0:
-                    st.warning(
-                        f"⚠️ {n_outliers} Ausreißer erkannt und aus der Darstellung entfernt "
-                        f"(Sensor-Artefakte / ungültige Messwerte)."
-                    )
-
-                with st.expander(f"📊 Visualisieren: {meas_name}"):
-                    try:
-                        has_real_data = "values" in meas_info and meas_info["values"] is not None
-
-                        if has_real_data:
-                            y_vals = meas_info["values"]
-                            # Downsample for performance if > 10k points
-                            if len(y_vals) > 10000:
-                                step = len(y_vals) // 5000
-                                y_plot = y_vals[::step]
-                            else:
-                                y_plot = y_vals
-                            x_vals = np.arange(len(y_plot))
-                            data_label = "Messdaten"
-                        else:
-                            # Fallback: generate demo sine for demo mode
-                            n_samples = meas_info.get('samples', 100)
-                            if isinstance(n_samples, str):
-                                n_samples = 100
-                            x_vals = np.arange(n_samples)
-                            demo_min = meas_info.get('min', 0)
-                            demo_max = meas_info.get('max', 100)
-                            if isinstance(demo_min, str):
-                                demo_min = 0
-                            if isinstance(demo_max, str):
-                                demo_max = 100
-                            demo_mid = (demo_min + demo_max) / 2
-                            demo_amp = (demo_max - demo_min) / 2
-                            y_plot = np.sin(np.linspace(0, 4 * np.pi, n_samples)) * demo_amp + demo_mid
-                            data_label = "Demo-Daten (keine echten Messwerte)"
-
-                        unit = meas_info.get('unit', '')
-                        fig = go.Figure()
-                        fig.add_trace(go.Scatter(
-                            x=x_vals,
-                            y=y_plot,
-                            mode='lines',
-                            name=meas_name,
-                            line=dict(color=COLORS.get('accent', '#4f8ef7'), width=1.5),
-                        ))
-                        fig.update_layout(
-                            title=f"{meas_name} – {data_label}",
-                            xaxis_title="Sample",
-                            yaxis_title=f"{unit}" if unit else "Wert",
-                            hovermode='x unified',
-                            height=400,
-                            template="plotly_dark",
+                    n_outliers = meas_info.get("outliers_removed", 0)
+                    if n_outliers > 0:
+                        st.warning(
+                            f"⚠️ {n_outliers} Ausreißer erkannt und entfernt."
                         )
-                        st.plotly_chart(fig, use_container_width=True)
 
-                        if not has_real_data:
-                            st.caption("⚠️ Keine echten Messwerte in der Datei gefunden – Darstellung zeigt Platzhalter-Daten.")
-                    except Exception as e:
-                        st.error(f"Fehler beim Visualisieren: {str(e)}")
-
-                st.divider()
+                    with st.expander(f"Einzeldarstellung: {meas_info.get('name', meas_name)}"):
+                        _plot_single_interactive(meas_name, meas_info)
         else:
             st.info("Noch keine Messungen vorhanden. Importieren Sie eine CSV-Datei um zu beginnen.")
 
@@ -445,3 +394,189 @@ def render_measurements(state):
                             st.warning(f"Sensor '{sensor_name}' existiert bereits.")
                     else:
                         st.error("Bitte geben Sie einen Sensornamen ein.")
+
+
+# ─── Matplotlib Visualization (weldx-widgets style) ───────────
+
+# Signal colors matching welding convention
+_SIGNAL_COLORS = {
+    "welding_current": "#00bcd4",   # cyan
+    "welding_voltage": "#ffc107",   # amber
+    "current": "#00bcd4",
+    "voltage": "#ffc107",
+    "gas_flow": "#4caf50",          # green
+    "wire_speed": "#e040fb",        # purple
+    "temperature": "#ff5722",       # deep orange
+}
+
+
+def _get_signal_color(name: str) -> str:
+    """Get a color for a signal by matching known keywords."""
+    name_lower = name.lower()
+    for key, color in _SIGNAL_COLORS.items():
+        if key in name_lower:
+            return color
+    palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
+    return palette[hash(name) % len(palette)]
+
+
+def _plot_measurements_overview(measurements: dict):
+    """Combined matplotlib figure with all measurements sharing the time axis."""
+    n = len(measurements)
+    if n == 0:
+        return
+
+    fig, axes = plt.subplots(
+        nrows=n, sharex=True,
+        figsize=(10, 2.2 * n + 0.5),
+        squeeze=False,
+    )
+    axes = axes.flatten()
+    fig.patch.set_facecolor("white")
+
+    x_label = "Sample"
+
+    for i, (meas_name, meas_info) in enumerate(measurements.items()):
+        ax = axes[i]
+        ax.set_facecolor("white")
+
+        y_vals = meas_info["values"]
+        samples = len(y_vals)
+        unit = meas_info.get("unit", "")
+        display_name = meas_info.get("name", meas_name)
+        color = _get_signal_color(meas_name)
+
+        # Downsample for plotting (max 5000 points)
+        step = max(1, samples // 5000)
+        y_plot = y_vals[::step]
+
+        # Use real time axis if available
+        time_s = meas_info.get("time_seconds")
+        if time_s is not None and len(time_s) == samples:
+            x_plot = time_s[::step]
+            x_label = "Zeit / s"
+        else:
+            x_plot = np.arange(len(y_plot))
+
+        ax.plot(x_plot, y_plot, color=color, linewidth=0.7, alpha=0.9)
+        ax.set_ylabel(f"{display_name}\n/ {unit}" if unit else display_name,
+                       fontsize=9, color="#333333")
+        ax.grid(True, alpha=0.3, color="#cccccc")
+        ax.tick_params(labelsize=8, colors="#333333")
+        for spine in ax.spines.values():
+            spine.set_color("#cccccc")
+
+        # Min/Max lines
+        mn = meas_info.get("min")
+        mx = meas_info.get("max")
+        if mn is not None and mx is not None and not isinstance(mn, str):
+            ax.axhline(mn, color=color, alpha=0.3, linewidth=0.5, linestyle="--")
+            ax.axhline(mx, color=color, alpha=0.3, linewidth=0.5, linestyle="--")
+
+    axes[-1].set_xlabel(x_label, fontsize=9, color="#333333")
+    fig.suptitle("Messdaten", fontsize=11, color="#111111", y=1.0)
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def _plot_single_measurement(meas_name: str, meas_info: dict):
+    """Render a single measurement as matplotlib figure."""
+    has_real_data = "values" in meas_info and meas_info["values"] is not None
+
+    if has_real_data:
+        y_vals = meas_info["values"]
+        step = max(1, len(y_vals) // 5000)
+        y_plot = y_vals[::step]
+    else:
+        n_samples = meas_info.get('samples', 100)
+        if isinstance(n_samples, str):
+            n_samples = 100
+        demo_min = meas_info.get('min', 0)
+        demo_max = meas_info.get('max', 100)
+        if isinstance(demo_min, str):
+            demo_min = 0
+        if isinstance(demo_max, str):
+            demo_max = 100
+        y_plot = np.sin(np.linspace(0, 4 * np.pi, n_samples)) * (demo_max - demo_min) / 2 + (demo_min + demo_max) / 2
+
+    unit = meas_info.get('unit', '')
+    display_name = meas_info.get('name', meas_name)
+    color = _get_signal_color(meas_name)
+
+    fig, ax = plt.subplots(figsize=(10, 3.5))
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+    ax.plot(np.arange(len(y_plot)), y_plot, color=color, linewidth=0.7)
+    ax.set_ylabel(f"{unit}" if unit else "Wert", fontsize=9, color="#333333")
+    ax.set_xlabel("Sample", fontsize=9, color="#333333")
+    ax.set_title(
+        f"{display_name}" + ("" if has_real_data else " (Demo-Daten)"),
+        fontsize=10, color="#111111",
+    )
+    ax.grid(True, alpha=0.3, color="#cccccc")
+    ax.tick_params(labelsize=8, colors="#333333")
+    for spine in ax.spines.values():
+        spine.set_color("#cccccc")
+    fig.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+    if not has_real_data:
+        st.caption("Keine echten Messwerte — Darstellung zeigt Platzhalter-Daten.")
+
+
+def _plot_single_interactive(meas_name: str, meas_info: dict):
+    """Render a single measurement as interactive Plotly chart (zoomable)."""
+    has_real_data = "values" in meas_info and meas_info["values"] is not None
+
+    if has_real_data:
+        y_vals = meas_info["values"]
+        step = max(1, len(y_vals) // 10000)
+        y_plot = y_vals[::step]
+    else:
+        n_samples = meas_info.get('samples', 100)
+        if isinstance(n_samples, str):
+            n_samples = 100
+        demo_min = meas_info.get('min', 0)
+        demo_max = meas_info.get('max', 100)
+        if isinstance(demo_min, str):
+            demo_min = 0
+        if isinstance(demo_max, str):
+            demo_max = 100
+        y_plot = np.sin(np.linspace(0, 4 * np.pi, n_samples)) * (demo_max - demo_min) / 2 + (demo_min + demo_max) / 2
+
+    unit = meas_info.get('unit', '')
+    display_name = meas_info.get('name', meas_name)
+    color = _get_signal_color(meas_name)
+
+    x_title = "Sample"
+    x_plot = np.arange(len(y_plot))
+
+    # Use real time axis if available
+    if has_real_data:
+        time_s = meas_info.get("time_seconds")
+        if time_s is not None:
+            step = max(1, len(time_s) // 10000)
+            x_plot = time_s[::step]
+            x_title = "Zeit / s"
+
+    fig = go.Figure()
+    fig.add_trace(go.Scattergl(
+        x=x_plot, y=y_plot,
+        mode='lines',
+        line=dict(color=color, width=1),
+        name=display_name,
+    ))
+    fig.update_layout(
+        title=display_name + ("" if has_real_data else " (Demo-Daten)"),
+        xaxis_title=x_title,
+        yaxis_title=f"{unit}" if unit else "Wert",
+        hovermode='x unified',
+        height=400,
+        template="plotly_dark",
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    if not has_real_data:
+        st.caption("Keine echten Messwerte — Darstellung zeigt Platzhalter-Daten.")
