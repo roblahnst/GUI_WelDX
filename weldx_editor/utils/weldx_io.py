@@ -53,6 +53,7 @@ class WeldxFileState:
     measurements: dict = field(default_factory=dict)       # time series from data.*
     equipment: dict = field(default_factory=dict)           # measurement chains from equipment.*
     coordinate_systems: dict = field(default_factory=dict)
+    _csm: Any = None                                          # weldx CoordinateSystemManager (if available)
     groove: Any = None
     base_metal: dict = field(default_factory=dict)
     shielding_gas: dict = field(default_factory=dict)       # extracted from process.shielding_gas
@@ -125,7 +126,7 @@ def load_weldx_from_bytes(file_bytes: bytes, filename: str) -> WeldxFileState:
 # ─── Extraction: Time Series (data.*) ───────────────────────
 
 def _extract_measurements(state: WeldxFileState):
-    """Extract time series from tree['data'] — RoboScope structure."""
+    """Extract time series from tree['data'] or tree['measurements']."""
     tree = state.tree
 
     # Primary: RoboScope puts time series under "data"
@@ -135,7 +136,26 @@ def _extract_measurements(state: WeldxFileState):
             state.measurements[name] = info
         return
 
-    # Fallback: look for keys at top level
+    # Native weldx: "measurements" as list of Measurement objects
+    if "measurements" in tree and isinstance(tree["measurements"], list):
+        for meas in tree["measurements"]:
+            meas_name = getattr(meas, "name", None) or str(meas)
+            # Measurement.data is a list of TimeSeries
+            ts_list = getattr(meas, "data", None)
+            if isinstance(ts_list, list) and ts_list:
+                ts = ts_list[0]
+            else:
+                ts = ts_list
+            key = meas_name.replace(" ", "_")
+            info = _describe_time_series(meas_name, ts)
+            # Attach measurement chain info if present
+            mc = getattr(meas, "measurement_chain", None)
+            if mc is not None:
+                info["_measurement_chain"] = mc
+            state.measurements[key] = info
+        return
+
+    # Fallback: "measurements" as dict (keyed by name)
     for key in ["measurements", "measurement_data"]:
         if key in tree and isinstance(tree[key], dict):
             for name, ts in tree[key].items():
@@ -244,10 +264,76 @@ def _extract_equipment(state: WeldxFileState):
     """Extract measurement equipment and chains from tree['equipment']."""
     tree = state.tree
 
-    if "equipment" not in tree or not isinstance(tree["equipment"], dict):
+    if "equipment" not in tree:
+        # Native weldx: equipment may be embedded in measurement chains
+        # Try to extract from measurements that carry _measurement_chain
+        for mkey, minfo in state.measurements.items():
+            mc = minfo.pop("_measurement_chain", None)
+            if mc is None:
+                continue
+            src_eq = getattr(mc, "_source_equipment", None) or getattr(mc, "source_equipment", None)
+            if src_eq is not None:
+                eq_name = getattr(src_eq, "name", mkey)
+                eq_info = {"name": eq_name, "key": eq_name.replace(" ", "_")}
+                sources = getattr(src_eq, "sources", [])
+                eq_info["sources"] = []
+                for src in sources:
+                    src_entry = {"name": getattr(src, "name", "")}
+                    sig = getattr(src, "output_signal", None)
+                    if sig is not None:
+                        src_entry["signal_type"] = getattr(sig, "signal_type", "")
+                        src_entry["signal_unit"] = str(getattr(sig, "units", ""))
+                    err = getattr(src, "error", None)
+                    if err is not None:
+                        dev = getattr(err, "deviation", None)
+                        if dev is not None and hasattr(dev, "magnitude"):
+                            src_entry["error_value"] = float(dev.magnitude)
+                            src_entry["error_unit"] = str(dev.units)
+                    eq_info["sources"].append(src_entry)
+                eq_info["has_chain"] = True
+                state.equipment[eq_info["key"]] = eq_info
         return
 
-    for name, eq in tree["equipment"].items():
+    raw_eq = tree["equipment"]
+
+    # Native weldx: equipment as list of MeasurementEquipment objects
+    if isinstance(raw_eq, list):
+        for eq in raw_eq:
+            eq_name = getattr(eq, "name", None)
+            if eq_name is None:
+                eq_name = str(eq)
+            key = eq_name.replace(" ", "_")
+            eq_info = {"name": eq_name, "key": key}
+
+            sources = getattr(eq, "sources", [])
+            eq_info["sources"] = []
+            for src in sources:
+                src_entry = {"name": getattr(src, "name", "")}
+                sig = getattr(src, "output_signal", None)
+                if sig is not None:
+                    src_entry["signal_type"] = getattr(sig, "signal_type", "")
+                    src_entry["signal_unit"] = str(getattr(sig, "units", ""))
+                err = getattr(src, "error", None)
+                if err is not None:
+                    dev = getattr(err, "deviation", None)
+                    if dev is not None and hasattr(dev, "magnitude"):
+                        src_entry["error_value"] = float(dev.magnitude)
+                        src_entry["error_unit"] = str(dev.units)
+                eq_info["sources"].append(src_entry)
+
+            transformations = getattr(eq, "transformations", [])
+            eq_info["has_chain"] = bool(sources or transformations)
+            state.equipment[key] = eq_info
+        # Also clean up _measurement_chain refs from measurements
+        for minfo in state.measurements.values():
+            minfo.pop("_measurement_chain", None)
+        return
+
+    # RoboScope: equipment as dict
+    if not isinstance(raw_eq, dict):
+        return
+
+    for name, eq in raw_eq.items():
         if not isinstance(eq, dict):
             continue
 
@@ -334,32 +420,207 @@ def _extract_coordinate_systems(state: WeldxFileState):
         if key in tree:
             csm = tree[key]
             if hasattr(csm, "coordinate_system_names"):
-                for name in csm.coordinate_system_names:
-                    state.coordinate_systems[name] = {"name": name, "status": "present"}
+                # Native weldx CoordinateSystemManager
+                state._csm = csm
+                _extract_cs_from_csm(csm, state)
             elif isinstance(csm, dict):
-                for name in csm:
-                    state.coordinate_systems[name] = {"name": name, "status": "present"}
+                # Native weldx dict with graph structure — walk nodes to find CS names
+                graph = csm.get("graph")
+                if graph is not None:
+                    _walk_cs_graph(graph, state.coordinate_systems)
+                if not state.coordinate_systems:
+                    # Flat dict fallback (keys = CS names)
+                    for name in csm:
+                        if name not in ("name", "reference_time", "graph", "subsystems"):
+                            state.coordinate_systems[name] = {"name": name, "status": "complete"}
             break
+
+
+def _extract_cs_from_csm(csm, state: WeldxFileState):
+    """Extract coordinate system data from a weldx CoordinateSystemManager."""
+    import warnings
+
+    names = list(csm.coordinate_system_names)
+
+    # Determine root node (node with no parent in the graph)
+    root = None
+    if hasattr(csm, "graph"):
+        g = csm.graph
+        for n in names:
+            preds = [p for p in g.predecessors(n)
+                     if g.edges[p, n].get("defined", False)]
+            if not preds:
+                root = n
+                break
+    if root is None and names:
+        root = names[0]
+
+    # Build parent map from graph edges
+    parent_map = {}
+    if hasattr(csm, "graph"):
+        g = csm.graph
+        for u, v, data in g.edges(data=True):
+            if data.get("defined", False) and v not in parent_map:
+                parent_map[v] = u
+
+    for name in names:
+        cs_info = {"name": name, "status": "complete", "parent": parent_map.get(name)}
+
+        if name == root:
+            cs_info["translation"] = {"x": 0.0, "y": 0.0, "z": 0.0}
+            cs_info["orientation"] = np.eye(3).tolist()
+            cs_info["is_root"] = True
+            state.coordinate_systems[name] = cs_info
+            continue
+
+        # Get CS relative to root for absolute positioning
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                lcs = csm.get_cs(name, root)
+
+            coords = lcs.coordinates.values
+            if hasattr(coords, "magnitude"):
+                coords = coords.magnitude
+
+            orient = lcs.orientation.values
+
+            if lcs.is_time_dependent:
+                cs_info["is_time_dependent"] = True
+                # Store first-timepoint position for static display
+                c0 = coords[0] if coords.ndim > 1 else coords
+                o0 = orient[0] if orient.ndim > 2 else orient
+                cs_info["translation"] = {"x": float(c0[0]), "y": float(c0[1]), "z": float(c0[2])}
+                cs_info["orientation"] = o0.tolist()
+                # Store full trajectory for TCP path visualization
+                if coords.ndim > 1 and coords.shape[0] > 1:
+                    cs_info["trajectory"] = coords
+            else:
+                cs_info["translation"] = {"x": float(coords[0]), "y": float(coords[1]), "z": float(coords[2])}
+                cs_info["orientation"] = orient.tolist()
+        except Exception:
+            cs_info["translation"] = {"x": 0.0, "y": 0.0, "z": 0.0}
+            cs_info["orientation"] = np.eye(3).tolist()
+
+        state.coordinate_systems[name] = cs_info
+
+
+def _walk_cs_graph(graph, cs_dict: dict):
+    """Walk a coordinate system graph (di_graph) and collect node names."""
+    root = graph if not isinstance(graph, dict) else graph.get("root_node")
+    if root is None:
+        return
+
+    def walk(node, visited=None):
+        if visited is None:
+            visited = set()
+        if not isinstance(node, dict) or id(node) in visited:
+            return
+        visited.add(id(node))
+
+        name = node.get("name")
+        if name and name not in cs_dict:
+            cs_dict[name] = {"name": name, "status": "present"}
+
+        for edge in node.get("edges", []):
+            if isinstance(edge, dict):
+                target = edge.get("target_node")
+                if target is not None:
+                    walk(target, visited)
+
+    walk(root)
 
 
 # ─── Extraction: Groove ──────────────────────────────────────
 
 def _extract_groove(state: WeldxFileState):
     tree = state.tree
-    for key in ["groove", "workpiece", "joint", "weld_joint"]:
+
+    # Direct groove key
+    if "groove" in tree:
+        state.groove = tree["groove"]
+        return
+
+    # Workpiece with nested groove
+    wp = tree.get("workpiece")
+    if wp is not None:
+        if isinstance(wp, dict):
+            if "groove" in wp:
+                state.groove = wp["groove"]
+                return
+            # Native weldx: workpiece.geometry.groove_shape
+            geom = wp.get("geometry")
+            if isinstance(geom, dict):
+                groove_obj = geom.get("groove_shape")
+                if groove_obj is not None:
+                    state.groove = _groove_obj_to_dict(groove_obj)
+                    return
+            elif geom is not None and hasattr(geom, "groove_shape"):
+                state.groove = _groove_obj_to_dict(geom.groove_shape)
+                return
+        elif hasattr(wp, "geometry"):
+            geom = wp.geometry
+            if hasattr(geom, "groove_shape"):
+                state.groove = _groove_obj_to_dict(geom.groove_shape)
+                return
+
+    # Joint / weld_joint fallback
+    for key in ["joint", "weld_joint"]:
         if key in tree:
             val = tree[key]
             if isinstance(val, dict) and "groove" in val:
                 state.groove = val["groove"]
             else:
                 state.groove = val
-            break
+            return
+
+
+_GROOVE_CLASS_TO_EDITOR = {
+    "VGroove": "V-Naht",
+    "IGroove": "I-Naht",
+    "HVGroove": "HV-Naht",
+    "UGroove": "U-Naht",
+    "DVGroove": "X-Naht (Doppel-V)",
+}
+
+
+def _groove_obj_to_dict(groove_obj) -> dict:
+    """Convert a weldx groove object (VGroove, etc.) to a dict for the editor."""
+    class_name = type(groove_obj).__name__  # e.g. "VGroove", "IGroove"
+    groove_type = _GROOVE_CLASS_TO_EDITOR.get(class_name, class_name)
+    result = {"type": groove_type}
+    params = {}
+
+    # Try .parameters() method first (returns dict of Quantity values)
+    if hasattr(groove_obj, "parameters") and callable(groove_obj.parameters):
+        try:
+            for pname, pval in groove_obj.parameters().items():
+                if hasattr(pval, "magnitude"):
+                    params[pname] = float(pval.magnitude)
+                else:
+                    params[pname] = pval
+            result["params"] = params
+            return result
+        except Exception:
+            pass
+
+    # Fallback: read known attributes directly
+    for attr in ("t", "alpha", "b", "c", "beta", "R", "alpha_1", "alpha_2"):
+        val = getattr(groove_obj, attr, None)
+        if val is not None:
+            if hasattr(val, "magnitude"):
+                params[attr] = float(val.magnitude)
+            else:
+                params[attr] = val
+    if params:
+        result["params"] = params
+    return result
 
 
 # ─── Extraction: Process (welding_process + shielding_gas) ──
 
 def _extract_process(state: WeldxFileState):
-    """Extract from tree['process'] — RoboScope structure."""
+    """Extract from tree['process'] — supports RoboScope dicts and native weldx objects."""
     tree = state.tree
 
     process_root = None
@@ -376,52 +637,131 @@ def _extract_process(state: WeldxFileState):
         return
 
     # --- Shielding gas ---
-    sg = process_root.get("shielding_gas", {})
-    if isinstance(sg, dict):
+    sg = process_root.get("shielding_gas")
+    if sg is not None:
         gas_info = {}
-        tsg = sg.get("torch_shielding_gas", {})
-        if isinstance(tsg, dict):
-            gas_info["common_name"] = tsg.get("common_name", "")
-            components = tsg.get("gas_component", [])
-            gas_info["components"] = []
-            for comp in (components if isinstance(components, list) else []):
-                if isinstance(comp, dict):
-                    pct = comp.get("gas_percentage", {})
-                    pct_val = pct.get("value", "") if isinstance(pct, dict) else pct
+
+        if isinstance(sg, dict):
+            # RoboScope dict format
+            tsg = sg.get("torch_shielding_gas", {})
+            if isinstance(tsg, dict):
+                gas_info["common_name"] = tsg.get("common_name", "")
+                components = tsg.get("gas_component", [])
+                gas_info["components"] = []
+                for comp in (components if isinstance(components, list) else []):
+                    if isinstance(comp, dict):
+                        pct = comp.get("gas_percentage", {})
+                        pct_val = pct.get("value", "") if isinstance(pct, dict) else pct
+                        gas_info["components"].append({
+                            "name": comp.get("gas_chemical_name", ""),
+                            "percentage": pct_val,
+                        })
+
+            flowrate = sg.get("torch_shielding_gas_flowrate", {})
+            if isinstance(flowrate, dict):
+                gas_info["flowrate_value"] = flowrate.get("value", "")
+                gas_info["flowrate_unit"] = str(flowrate.get("units", ""))
+
+            gas_info["use_torch"] = sg.get("use_torch_shielding_gas", None)
+        else:
+            # Native weldx ShieldingGasForProcedure object
+            gas_info["use_torch"] = getattr(sg, "use_torch_shielding_gas", None)
+            tsg = getattr(sg, "torch_shielding_gas", None)
+            if tsg is not None:
+                gas_info["common_name"] = getattr(tsg, "common_name", "")
+                gas_comps = getattr(tsg, "gas_component", [])
+                gas_info["components"] = []
+                for comp in (gas_comps if isinstance(gas_comps, list) else []):
+                    pct = getattr(comp, "gas_percentage", None)
+                    if pct is not None and hasattr(pct, "magnitude"):
+                        pct_val = float(pct.magnitude)
+                    elif pct is not None:
+                        pct_val = pct
+                    else:
+                        pct_val = ""
                     gas_info["components"].append({
-                        "name": comp.get("gas_chemical_name", ""),
+                        "name": getattr(comp, "gas_chemical_name", ""),
                         "percentage": pct_val,
                     })
 
-        flowrate = sg.get("torch_shielding_gas_flowrate", {})
-        if isinstance(flowrate, dict):
-            gas_info["flowrate_value"] = flowrate.get("value", "")
-            gas_info["flowrate_unit"] = str(flowrate.get("units", ""))
+            flowrate = getattr(sg, "torch_shielding_gas_flowrate", None)
+            if flowrate is not None:
+                if hasattr(flowrate, "magnitude"):
+                    gas_info["flowrate_value"] = float(flowrate.magnitude)
+                    gas_info["flowrate_unit"] = str(flowrate.units)
+                elif isinstance(flowrate, dict):
+                    gas_info["flowrate_value"] = flowrate.get("value", "")
+                    gas_info["flowrate_unit"] = str(flowrate.get("units", ""))
 
-        gas_info["use_torch"] = sg.get("use_torch_shielding_gas", None)
         state.shielding_gas = gas_info
 
     # --- Welding process ---
-    wp = process_root.get("welding_process", {})
-    if isinstance(wp, dict):
-        state.process = {
-            "tag": wp.get("tag", ""),                    # e.g. "GMAW"
-            "base_process": wp.get("base_process", ""),  # e.g. "pulse"
-            "manufacturer": wp.get("manufacturer", ""),  # e.g. "Fronius"
-            "power_source": wp.get("power_source", ""),  # e.g. "Transpuls 420"
-        }
-    elif not state.process:
+    wp = process_root.get("welding_process")
+    if wp is not None:
+        if isinstance(wp, dict):
+            # RoboScope dict format
+            state.process = {
+                "tag": wp.get("tag", ""),
+                "base_process": wp.get("base_process", ""),
+                "manufacturer": wp.get("manufacturer", ""),
+                "power_source": wp.get("power_source", ""),
+            }
+        elif hasattr(wp, "tag"):
+            # Native weldx GmawProcess / similar object
+            state.process = {
+                "tag": getattr(wp, "tag", ""),
+                "base_process": getattr(wp, "base_process", ""),
+                "manufacturer": getattr(wp, "manufacturer", ""),
+                "power_source": getattr(wp, "power_source", ""),
+            }
+            # Extract process parameters (TimeSeries values)
+            params = getattr(wp, "parameters", None)
+            if isinstance(params, dict):
+                proc_params = {}
+                for pname, pval in params.items():
+                    if hasattr(pval, "data") and hasattr(pval.data, "magnitude"):
+                        proc_params[pname] = {
+                            "value": float(pval.data.magnitude),
+                            "unit": str(pval.data.units),
+                        }
+                    elif hasattr(pval, "value"):
+                        proc_params[pname] = {"value": pval.value, "unit": str(getattr(pval, "units", ""))}
+                if proc_params:
+                    state.process["parameters"] = proc_params
+
+    if not state.process:
         # Maybe tag is at top level (e.g. tree["GMAW"])
         for tag in ["GMAW", "GTAW", "SAW"]:
             if tag in tree:
                 state.process = {"tag": tag, "raw": tree[tag]}
                 break
 
+    # --- Welding wire (filler material) ---
+    ww = process_root.get("welding_wire")
+    if ww is not None and not state.filler_material:
+        if isinstance(ww, dict):
+            fm = {}
+            if "diameter" in ww:
+                d = ww["diameter"]
+                if hasattr(d, "magnitude"):
+                    fm["diameter"] = float(d.magnitude)
+                    fm["diameter_unit"] = str(d.units)
+                elif isinstance(d, dict):
+                    fm["diameter"] = d.get("value", "")
+                    fm["diameter_unit"] = str(d.get("units", ""))
+            if "class" in ww:
+                fm["classification"] = ww["class"]
+            wx_u = ww.get("wx_user", {})
+            if isinstance(wx_u, dict):
+                fm["manufacturer"] = wx_u.get("manufacturer", "")
+                fm["charge_id"] = wx_u.get("charge id", "")
+            state.filler_material = fm
+
 
 # ─── Extraction: Metadata ────────────────────────────────────
 
 def _extract_metadata(state: WeldxFileState):
-    """Extract from tree['metadata'] — RoboScope nests under 'roboscope' key."""
+    """Extract metadata from tree — supports RoboScope and native weldx layouts."""
     tree = state.tree
     meta = {}
 
@@ -446,9 +786,44 @@ def _extract_metadata(state: WeldxFileState):
             # Flat metadata
             meta = dict(raw_meta)
 
-    # Extract material info into base_metal if present
-    if meta.get("material"):
+    # Native weldx: user info under "wx_user"
+    if not meta and "wx_user" in tree:
+        wx_u = tree["wx_user"]
+        if isinstance(wx_u, dict):
+            meta["operator"] = wx_u.get("operator", "")
+            meta["project"] = wx_u.get("project", "")
+            wid = wx_u.get("WID")
+            if wid is not None:
+                meta["WID"] = str(wid)
+            meta["source_format"] = "WeldX"
+
+    # reference_timestamp (native weldx)
+    ref_ts = tree.get("reference_timestamp")
+    if ref_ts is not None and "start_time" not in meta:
+        meta["start_time"] = str(ref_ts)
+
+    # Extract material info into base_metal if present (RoboScope path)
+    if meta.get("material") and not state.base_metal:
         state.base_metal = {"designation": meta["material"]}
+
+    # Native weldx: workpiece.base_metal
+    if not state.base_metal:
+        wp = tree.get("workpiece")
+        if isinstance(wp, dict):
+            bm = wp.get("base_metal")
+            if isinstance(bm, dict):
+                designation = bm.get("common_name", "")
+                standard = bm.get("standard", "")
+                state.base_metal = {"designation": designation}
+                if standard:
+                    state.base_metal["standard"] = standard
+            elif bm is not None:
+                # weldx object
+                designation = getattr(bm, "common_name", "") or str(bm)
+                state.base_metal = {"designation": designation}
+                std = getattr(bm, "standard", None)
+                if std:
+                    state.base_metal["standard"] = str(std)
 
     state.metadata = meta
 

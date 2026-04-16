@@ -1,4 +1,6 @@
+import numpy as np
 import streamlit as st
+import plotly.graph_objects as go
 from weldx_editor.utils.style import COLORS
 
 
@@ -245,7 +247,171 @@ def render_coordinates(state):
 
                     st.divider()
 
-        st.info("💡 Hinweis: 3D-Visualisierung wird durch k3d-Integration verfügbar sein.")
+        st.divider()
+        _render_3d_visualization(state)
+
+
+# ─── 3D Visualization ─────────────────────────────────────────
+
+# Axis colors: X=red, Y=green, Z=blue
+_AXIS_COLORS = ["#e74c3c", "#2ecc71", "#3498db"]
+_AXIS_LABELS = ["X", "Y", "Z"]
+
+
+def _render_3d_visualization(state):
+    """Render an interactive 3D Plotly visualization of all coordinate systems."""
+    cs = state.coordinate_systems
+    if not cs:
+        st.info("Keine Koordinatensysteme vorhanden.")
+        return
+
+    # Check if any CS has actual translation data
+    has_transforms = any(
+        isinstance(info.get("translation"), dict)
+        for info in cs.values()
+    )
+    if not has_transforms:
+        st.info("Keine Transformationsdaten vorhanden.")
+        return
+
+    st.subheader("3D-Visualisierung")
+
+    fig = go.Figure()
+
+    # Compute axis arrow length relative to scene extent
+    positions = []
+    for info in cs.values():
+        t = info.get("translation")
+        if isinstance(t, dict):
+            positions.append([t["x"], t["y"], t["z"]])
+    positions = np.array(positions)
+    extent = np.ptp(positions, axis=0).max() if len(positions) > 1 else 100.0
+    arrow_len = max(extent * 0.06, 5.0)
+
+    # Draw each coordinate system
+    for name, info in cs.items():
+        t = info.get("translation")
+        if not isinstance(t, dict):
+            continue
+        origin = np.array([t["x"], t["y"], t["z"]])
+        orient = info.get("orientation")
+        if orient is not None:
+            R = np.array(orient)
+        else:
+            R = np.eye(3)
+
+        # Draw 3 axis arrows
+        for axis_idx in range(3):
+            direction = R[:, axis_idx] if R.ndim == 2 else np.eye(3)[:, axis_idx]
+            tip = origin + direction * arrow_len
+            color = _AXIS_COLORS[axis_idx]
+
+            # Axis line
+            fig.add_trace(go.Scatter3d(
+                x=[origin[0], tip[0]],
+                y=[origin[1], tip[1]],
+                z=[origin[2], tip[2]],
+                mode="lines",
+                line=dict(color=color, width=4),
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+            # Arrowhead cone
+            fig.add_trace(go.Cone(
+                x=[tip[0]], y=[tip[1]], z=[tip[2]],
+                u=[direction[0]], v=[direction[1]], w=[direction[2]],
+                sizemode="absolute",
+                sizeref=arrow_len * 0.3,
+                colorscale=[[0, color], [1, color]],
+                showscale=False,
+                showlegend=False,
+                hoverinfo="skip",
+            ))
+
+        # Origin marker + label
+        fig.add_trace(go.Scatter3d(
+            x=[origin[0]], y=[origin[1]], z=[origin[2]],
+            mode="markers+text",
+            marker=dict(size=4, color="#2c3e50"),
+            text=[name],
+            textposition="top center",
+            textfont=dict(size=10, color="#2c3e50"),
+            showlegend=False,
+            hovertext=f"{name}<br>X={origin[0]:.1f}<br>Y={origin[1]:.1f}<br>Z={origin[2]:.1f}",
+            hoverinfo="text",
+        ))
+
+        # Connection line to parent
+        parent_name = info.get("parent")
+        if parent_name and parent_name in cs:
+            pt = cs[parent_name].get("translation")
+            if isinstance(pt, dict):
+                parent_pos = [pt["x"], pt["y"], pt["z"]]
+                fig.add_trace(go.Scatter3d(
+                    x=[parent_pos[0], origin[0]],
+                    y=[parent_pos[1], origin[1]],
+                    z=[parent_pos[2], origin[2]],
+                    mode="lines",
+                    line=dict(color="#bdc3c7", width=1, dash="dash"),
+                    showlegend=False,
+                    hoverinfo="skip",
+                ))
+
+    # Draw trajectories for TCP-related coordinate systems
+    _TRAJ_COLORS = ["#f39c12", "#e67e22", "#d35400"]
+    traj_idx = 0
+    for name, info in cs.items():
+        traj = info.get("trajectory")
+        if traj is None or not hasattr(traj, "shape") or traj.shape[0] <= 2:
+            continue
+        # Only show trajectories for TCP-like systems (the actual tool path)
+        name_lower = name.lower()
+        if not any(k in name_lower for k in ("tcp", "tool", "trace")):
+            continue
+        # Downsample for performance (max 2000 points)
+        n = traj.shape[0]
+        step = max(1, n // 2000)
+        sampled = traj[::step]
+        color = _TRAJ_COLORS[traj_idx % len(_TRAJ_COLORS)]
+        fig.add_trace(go.Scatter3d(
+            x=sampled[:, 0], y=sampled[:, 1], z=sampled[:, 2],
+            mode="lines",
+            line=dict(color=color, width=3),
+            name=f"{name} Trajektorie",
+            showlegend=True,
+            hoverinfo="skip",
+        ))
+        traj_idx += 1
+
+    # Layout
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="X (mm)",
+            yaxis_title="Y (mm)",
+            zaxis_title="Z (mm)",
+            aspectmode="data",
+        ),
+        margin=dict(l=0, r=0, t=30, b=0),
+        height=600,
+        legend=dict(
+            yanchor="top", y=0.99,
+            xanchor="left", x=0.01,
+        ),
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Legend for axis colors
+    st.caption(
+        "Achsenfarben: "
+        "<span style='color:#e74c3c'>X</span> / "
+        "<span style='color:#2ecc71'>Y</span> / "
+        "<span style='color:#3498db'>Z</span>"
+        " &mdash; gestrichelte Linien: Parent-Verbindungen"
+        " &mdash; <span style='color:#f39c12'>orange</span>: Trajektorie",
+        unsafe_allow_html=True,
+    )
 
 
 def _build_kos_tree(coordinate_systems: dict, parent=None, indent=0) -> str:
