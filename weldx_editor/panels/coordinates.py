@@ -1,6 +1,5 @@
 import numpy as np
 import streamlit as st
-import plotly.graph_objects as go
 from weldx_editor.utils.style import COLORS
 
 
@@ -253,12 +252,12 @@ def render_coordinates(state):
 
 # ─── 3D Visualization ─────────────────────────────────────────
 
-# Axis colors: X=red, Y=green, Z=blue (matching k3d convention)
-_AXIS_COLORS = ["#e74c3c", "#2ecc71", "#3498db"]
-
+# ─── 3D Visualization (PyVista / VTK) ─────────────────────────
 
 def _render_3d_visualization(state):
-    """Render interactive 3D visualization: workpiece mesh + TCP path + CS labels."""
+    """Render interactive 3D visualization using Three.js with direct geometry."""
+    import json
+
     cs = state.coordinate_systems
     meshes = getattr(state, "workpiece_meshes", [])
 
@@ -266,127 +265,238 @@ def _render_3d_visualization(state):
         st.info("Keine Koordinatensysteme vorhanden.")
         return
 
+    has_data = meshes or any(
+        isinstance(info.get("translation"), dict) for info in cs.values()
+    )
+    if not has_data:
+        st.info("Keine Transformationsdaten vorhanden.")
+        return
+
     st.subheader("3D-Visualisierung")
 
-    fig = go.Figure()
+    # ── Prepare mesh data (clean NaN + decimate) ──
+    mesh_json = []
+    for mesh_data in meshes:
+        verts = mesh_data["vertices"].astype(np.float64)
+        tris = mesh_data["triangles"].astype(np.int64)
 
-    # ── Workpiece mesh (3D scan surfaces) ──
-    _MAX_TRIS = 20_000  # browser-friendly triangle budget per mesh
-    for mesh in meshes:
-        verts = mesh["vertices"]
-        tris = mesh["triangles"]
+        # Remove NaN vertices
+        nan_mask = np.isnan(verts).any(axis=1)
+        if nan_mask.any():
+            valid_tri = ~(nan_mask[tris[:, 0]] | nan_mask[tris[:, 1]] | nan_mask[tris[:, 2]])
+            tris = tris[valid_tri]
+            used = np.unique(tris)
+            remap = np.full(verts.shape[0], -1, dtype=np.int64)
+            remap[used] = np.arange(len(used))
+            verts = verts[used]
+            tris = remap[tris]
 
-        # Downsample triangles and reindex vertices for browser performance
-        if tris.shape[0] > _MAX_TRIS:
-            step = max(1, tris.shape[0] // _MAX_TRIS)
-            tris = tris[::step]
+        # Decimate with PyVista/VTK if available
+        if tris.shape[0] > 80_000:
+            try:
+                import pyvista as pv
+                import vtk
+                vtk.vtkLogger.SetStderrVerbosity(vtk.vtkLogger.VERBOSITY_OFF)
+                faces = np.column_stack([np.full(tris.shape[0], 3, dtype=np.int64), tris]).ravel()
+                pv_mesh = pv.PolyData(verts, faces)
+                alg = vtk.vtkQuadricClustering()
+                alg.SetInputData(pv_mesh)
+                alg.SetNumberOfXDivisions(300)
+                alg.SetNumberOfYDivisions(300)
+                alg.SetNumberOfZDivisions(300)
+                alg.Update()
+                dec = pv.wrap(alg.GetOutput())
+                verts = np.asarray(dec.points)
+                tris = dec.faces.reshape(-1, 4)[:, 1:4]
+            except ImportError:
+                # Fallback: stride sampling
+                step = max(1, tris.shape[0] // 80_000)
+                tris = tris[::step]
+                used = np.unique(tris)
+                remap2 = np.full(verts.shape[0], -1, dtype=np.int64)
+                remap2[used] = np.arange(len(used))
+                verts = verts[used]
+                tris = remap2[tris]
 
-        # Keep only referenced vertices (avoids sending 277k when only 50k used)
-        used = np.unique(tris)
-        remap = np.full(verts.shape[0], -1, dtype=np.int64)
-        remap[used] = np.arange(len(used))
-        verts = verts[used]
-        tris = remap[tris]
+        mesh_json.append({
+            "v": verts.ravel().tolist(),
+            "i": tris.ravel().tolist(),
+        })
 
-        fig.add_trace(go.Mesh3d(
-            x=verts[:, 0], y=verts[:, 1], z=verts[:, 2],
-            i=tris[:, 0], j=tris[:, 1], k=tris[:, 2],
-            color="#808080",
-            opacity=0.85,
-            flatshading=True,
-            lighting=dict(
-                ambient=0.4,
-                diffuse=0.6,
-                specular=0.2,
-                roughness=0.8,
-            ),
-            lightposition=dict(x=200, y=200, z=300),
-            showlegend=False,
-            hoverinfo="skip",
-            name=mesh.get("name", "Werkstück"),
-        ))
-
-    # ── TCP / design trajectories ──
-    _traj_colors = {"tcp": "#cc0000", "design": "#cc0000", "trace": "#cc0000"}
+    # ── Prepare trajectory data ──
+    traj_json = []
     for name, info in cs.items():
-        # Static 2-point paths (e.g. TCP design)
         traj = info.get("trajectory")
-        name_lower = name.lower()
+        if traj is None or not hasattr(traj, "shape") or traj.shape[0] < 2:
+            continue
+        if not any(k in name.lower() for k in ("tcp", "tool", "trace", "design")):
+            continue
+        pts = traj[::max(1, traj.shape[0] // 500)].astype(np.float64)
+        traj_json.append({"name": name, "pts": pts.ravel().tolist()})
 
-        if traj is not None and hasattr(traj, "shape") and traj.shape[0] >= 2:
-            is_tcp = any(k in name_lower for k in ("tcp", "tool", "trace", "design"))
-            if not is_tcp:
-                continue
-            n = traj.shape[0]
-            step = max(1, n // 500)
-            sampled = traj[::step]
-            fig.add_trace(go.Scatter3d(
-                x=sampled[:, 0], y=sampled[:, 1], z=sampled[:, 2],
-                mode="lines",
-                line=dict(color="#cc0000", width=5),
-                name=name,
-                showlegend=True,
-                hoverinfo="skip",
-            ))
-
-    # ── CS labels (positioned at their origin) ──
-    # Only label key coordinate systems to avoid clutter
-    _label_colors = {
-        "tcp": "#cc0000", "design": "#cc0000", "trace": "#cc0000",
-        "t1": "#00aa00", "t2": "#00aa00",
-        "workpiece": "#333333", "user_frame": "#333333",
-        "flange": "#0066cc", "llt": "#0066cc", "xiris": "#0066cc",
-    }
+    # ── Prepare label data ──
+    label_json = []
     for name, info in cs.items():
         t = info.get("translation")
         if not isinstance(t, dict):
             continue
+        color = "#cc0000" if any(k in name.lower() for k in ("tcp", "design")) \
+            else "#00aa00" if any(k in name.lower() for k in ("t1", "t2")) \
+            else "#333333"
+        label_json.append({"name": name, "pos": [t["x"], t["y"], t["z"]], "color": color})
 
-        # Determine label color based on CS type
-        name_lower = name.lower()
-        color = "#333333"
-        for key, c in _label_colors.items():
-            if key in name_lower:
-                color = c
-                break
+    # ── Build HTML ──
+    scene_data = json.dumps({"meshes": mesh_json, "trajectories": traj_json, "labels": label_json})
+    html = _THREEJS_VIEWER_HEAD + scene_data + _THREEJS_VIEWER_TAIL
+    st.components.v1.html(html, height=650, scrolling=False)
 
-        fig.add_trace(go.Scatter3d(
-            x=[t["x"]], y=[t["y"]], z=[t["z"]],
-            mode="text",
-            text=[f"<b>{name}</b>"],
-            textposition="top center",
-            textfont=dict(size=12, color=color),
-            showlegend=False,
-            hovertext=f"{name}<br>X={t['x']:.1f} mm<br>Y={t['y']:.1f} mm<br>Z={t['z']:.1f} mm",
-            hoverinfo="text",
-        ))
 
-    # ── Layout (matching k3d style: light grid background) ──
-    grid_style = dict(
-        showgrid=True,
-        gridcolor="#cccccc",
-        showbackground=True,
-        backgroundcolor="#f5f5f5",
-        gridwidth=1,
-    )
-    fig.update_layout(
-        scene=dict(
-            xaxis=dict(title="X (mm)", **grid_style),
-            yaxis=dict(title="Y (mm)", **grid_style),
-            zaxis=dict(title="Z (mm)", **grid_style),
-            aspectmode="data",
-        ),
-        margin=dict(l=0, r=0, t=30, b=0),
-        height=650,
-        legend=dict(
-            yanchor="top", y=0.99,
-            xanchor="left", x=0.01,
-            bgcolor="rgba(255,255,255,0.8)",
-        ),
-        paper_bgcolor="white",
-    )
+_THREEJS_VIEWER_HEAD = """<!DOCTYPE html>
+<html><head><style>
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden;
+               background:#f8fafc; font-family:Arial,sans-serif; }
+  canvas { display:block; }
+</style></head><body>
+<script id="sceneData" type="application/json">
+"""
 
-    st.plotly_chart(fig, use_container_width=True)
+_THREEJS_VIEWER_TAIL = """
+</script>
+<script type="importmap">
+{ "imports": {
+    "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+    "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const DATA = JSON.parse(document.getElementById('sceneData').textContent);
+
+// Scene
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0xf8fafc);
+
+// Lighting
+scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+const dir1 = new THREE.DirectionalLight(0xffffff, 0.7);
+dir1.position.set(200, 300, 400);
+scene.add(dir1);
+const dir2 = new THREE.DirectionalLight(0xffffff, 0.3);
+dir2.position.set(-200, -100, -300);
+scene.add(dir2);
+
+// Camera + Renderer
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth/window.innerHeight, 0.1, 100000);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Controls
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+controls.rotateSpeed = 0.8;
+controls.zoomSpeed = 1.2;
+controls.panSpeed = 0.8;
+controls.screenSpacePanning = true;
+
+// Bounding box for auto-fit
+const sceneBox = new THREE.Box3();
+
+// ── Add workpiece meshes ──
+const meshMaterial = new THREE.MeshPhongMaterial({
+  color: 0x808080, side: THREE.DoubleSide,
+  shininess: 30, flatShading: false,
+});
+
+DATA.meshes.forEach(m => {
+  const geom = new THREE.BufferGeometry();
+  geom.setAttribute('position', new THREE.Float32BufferAttribute(m.v, 3));
+  geom.setIndex(m.i);
+  geom.computeVertexNormals();
+  const mesh = new THREE.Mesh(geom, meshMaterial);
+  scene.add(mesh);
+  sceneBox.expandByObject(mesh);
+});
+
+// ── Add trajectories ──
+DATA.trajectories.forEach(t => {
+  const pts = [];
+  for (let i = 0; i < t.pts.length; i += 3) {
+    pts.push(new THREE.Vector3(t.pts[i], t.pts[i+1], t.pts[i+2]));
+  }
+  const geom = new THREE.BufferGeometry().setFromPoints(pts);
+  const mat = new THREE.LineBasicMaterial({ color: 0xcc0000, linewidth: 2 });
+  scene.add(new THREE.Line(geom, mat));
+});
+
+// ── Add labels ──
+function makeLabel(text, pos, color) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256; canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 24px Arial';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.fillText(text, 128, 40);
+  const tex = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.position.set(pos[0], pos[1], pos[2]);
+  const s = sceneBox.getSize(new THREE.Vector3()).length() * 0.06;
+  sprite.scale.set(s * 2, s * 0.5, 1);
+  return sprite;
+}
+DATA.labels.forEach(l => scene.add(makeLabel(l.name, l.pos, l.color)));
+
+// ── Fit camera ──
+const center = sceneBox.getCenter(new THREE.Vector3());
+const size = sceneBox.getSize(new THREE.Vector3()).length();
+camera.position.copy(center).add(new THREE.Vector3(size*0.5, size*0.35, size*0.7));
+camera.near = size * 0.001;
+camera.far = size * 10;
+camera.updateProjectionMatrix();
+controls.target.copy(center);
+controls.update();
+
+// Grid
+const grid = new THREE.GridHelper(size * 1.5, 20, 0xcccccc, 0xe8e8e8);
+grid.position.copy(center);
+grid.position.y = sceneBox.min.y - 0.01;
+scene.add(grid);
+
+// ── Axes ──
+function axisLine(from, to, color) {
+  const g = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(...from), new THREE.Vector3(...to)
+  ]);
+  return new THREE.Line(g, new THREE.LineBasicMaterial({ color }));
+}
+const ax = size * 0.12;
+const o = [sceneBox.min.x, sceneBox.min.y, sceneBox.max.z];
+scene.add(axisLine(o, [o[0]+ax, o[1], o[2]], 0xe74c3c));
+scene.add(axisLine(o, [o[0], o[1]+ax, o[2]], 0x2ecc71));
+scene.add(axisLine(o, [o[0], o[1], o[2]-ax], 0x3498db));
+scene.add(makeLabel('X', [o[0]+ax*1.3, o[1], o[2]], '#e74c3c'));
+scene.add(makeLabel('Y', [o[0], o[1]+ax*1.3, o[2]], '#2ecc71'));
+scene.add(makeLabel('Z', [o[0], o[1], o[2]-ax*1.3], '#3498db'));
+
+// Render loop
+(function animate() {
+  requestAnimationFrame(animate);
+  controls.update();
+  renderer.render(scene, camera);
+})();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(window.innerWidth, window.innerHeight);
+});
+</script></body></html>"""
 
 
 def _build_kos_tree(coordinate_systems: dict, parent=None, indent=0) -> str:
