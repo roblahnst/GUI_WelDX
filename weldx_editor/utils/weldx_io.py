@@ -1002,7 +1002,34 @@ def _extract_metadata(state: WeldxFileState):
                 if std:
                     state.base_metal["standard"] = str(std)
 
+    # Match designation to material database entry
+    if state.base_metal and state.base_metal.get("designation") and not state.base_metal.get("material"):
+        _match_material_db(state.base_metal)
+
     state.metadata = meta
+
+
+def _match_material_db(base_metal: dict):
+    """Match a designation (e.g. 'S355J2+N') to the editor's material DB."""
+    try:
+        from weldx_editor.panels.workpiece import MATERIALS_DB
+    except ImportError:
+        return
+
+    designation = base_metal.get("designation", "")
+    if not designation:
+        return
+
+    # Extract the base name (e.g. "S355J2" from "S355J2+N")
+    base = designation.split("+")[0].strip()
+
+    for group_name, materials in MATERIALS_DB.items():
+        for mat_key in materials:
+            # mat_key is like "S355J2 (1.0577) — EN 10025-2"
+            if base in mat_key:
+                base_metal["material"] = mat_key
+                base_metal["material_group"] = group_name
+                return
 
 
 # ─── Extraction: Quality ─────────────────────────────────────

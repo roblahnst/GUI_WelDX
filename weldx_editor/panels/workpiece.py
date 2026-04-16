@@ -4,74 +4,243 @@ from weldx_editor.utils.style import COLORS
 
 
 # Material database for different material groups
+# Mechanical properties: minimum values at room temperature, t <= 40 mm
+# density in kg/dm³ (= g/cm³)
 MATERIALS_DB = {
-    "Stähle": {
-        "S235JR (1.0038) — EN 10025-2": {
-            "yield_strength": 235,  # MPa
-            "tensile_strength": 360,  # MPa
-            "density": 7850,  # kg/m³
-        },
-        "S355J2 (1.0577) — EN 10025-2": {
-            "yield_strength": 355,
-            "tensile_strength": 510,
-            "density": 7850,
-        },
-        "P265GH (1.0425) — EN 10028-2": {
-            "yield_strength": 265,
-            "tensile_strength": 430,
-            "density": 7850,
-        },
-        "X5CrNi18-10 (1.4301) — EN 10088-2": {
-            "yield_strength": 210,
-            "tensile_strength": 500,
-            "density": 8000,
-        },
-        "Benutzerdefiniert": {
-            "yield_strength": None,
-            "tensile_strength": None,
-            "density": None,
-        },
+    # ── Unlegierte Baustähle (EN 10025-2) ──
+    "Unlegierte Baustähle": {
+        "S235JR (1.0038) — EN 10025-2":   {"yield_strength": 235, "tensile_strength": 360, "density": 7.85},
+        "S235J0 (1.0114) — EN 10025-2":   {"yield_strength": 235, "tensile_strength": 360, "density": 7.85},
+        "S235J2 (1.0117) — EN 10025-2":   {"yield_strength": 235, "tensile_strength": 360, "density": 7.85},
+        "S275JR (1.0044) — EN 10025-2":   {"yield_strength": 275, "tensile_strength": 410, "density": 7.85},
+        "S275J0 (1.0143) — EN 10025-2":   {"yield_strength": 275, "tensile_strength": 410, "density": 7.85},
+        "S275J2 (1.0145) — EN 10025-2":   {"yield_strength": 275, "tensile_strength": 410, "density": 7.85},
+        "S355JR (1.0045) — EN 10025-2":   {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S355J0 (1.0553) — EN 10025-2":   {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S355J2 (1.0577) — EN 10025-2":   {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S355K2 (1.0596) — EN 10025-2":   {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S450J0 (1.0590) — EN 10025-2":   {"yield_strength": 450, "tensile_strength": 550, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
     },
-    "Aluminium": {
-        "EN AW-5083 H32": {
-            "yield_strength": 215,
-            "tensile_strength": 305,
-            "density": 2660,
-        },
-        "EN AW-6061 T6": {
-            "yield_strength": 275,
-            "tensile_strength": 310,
-            "density": 2700,
-        },
-        "Benutzerdefiniert": {
-            "yield_strength": None,
-            "tensile_strength": None,
-            "density": None,
-        },
+    # ── Feinkornbaustähle normalgeglüht (EN 10025-3) ──
+    "Feinkornbaustähle (N/NL)": {
+        "S275N (1.0490) — EN 10025-3":    {"yield_strength": 275, "tensile_strength": 370, "density": 7.85},
+        "S275NL (1.0491) — EN 10025-3":   {"yield_strength": 275, "tensile_strength": 370, "density": 7.85},
+        "S355N (1.0545) — EN 10025-3":    {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S355NL (1.0546) — EN 10025-3":   {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S420N (1.8902) — EN 10025-3":    {"yield_strength": 420, "tensile_strength": 520, "density": 7.85},
+        "S420NL (1.8912) — EN 10025-3":   {"yield_strength": 420, "tensile_strength": 520, "density": 7.85},
+        "S460N (1.8901) — EN 10025-3":    {"yield_strength": 460, "tensile_strength": 540, "density": 7.85},
+        "S460NL (1.8903) — EN 10025-3":   {"yield_strength": 460, "tensile_strength": 540, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
     },
-    "Nickel-Legierungen": {
-        "Inconel 625": {
-            "yield_strength": 414,
-            "tensile_strength": 965,
-            "density": 8440,
-        },
-        "Benutzerdefiniert": {
-            "yield_strength": None,
-            "tensile_strength": None,
-            "density": None,
-        },
+    # ── Feinkornbaustähle thermomechanisch (EN 10025-4) ──
+    "Feinkornbaustähle (M/ML)": {
+        "S275M (1.8818) — EN 10025-4":    {"yield_strength": 275, "tensile_strength": 370, "density": 7.85},
+        "S275ML (1.8819) — EN 10025-4":   {"yield_strength": 275, "tensile_strength": 370, "density": 7.85},
+        "S355M (1.8823) — EN 10025-4":    {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S355ML (1.8834) — EN 10025-4":   {"yield_strength": 355, "tensile_strength": 470, "density": 7.85},
+        "S420M (1.8825) — EN 10025-4":    {"yield_strength": 420, "tensile_strength": 520, "density": 7.85},
+        "S420ML (1.8836) — EN 10025-4":   {"yield_strength": 420, "tensile_strength": 520, "density": 7.85},
+        "S460M (1.8827) — EN 10025-4":    {"yield_strength": 460, "tensile_strength": 540, "density": 7.85},
+        "S460ML (1.8838) — EN 10025-4":   {"yield_strength": 460, "tensile_strength": 540, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
     },
-    "Titan-Legierungen": {
-        "Ti-6Al-4V": {
-            "yield_strength": 880,
-            "tensile_strength": 930,
-            "density": 4430,
-        },
-        "Benutzerdefiniert": {
-            "yield_strength": None,
-            "tensile_strength": None,
-            "density": None,
-        },
+    # ── Hochfeste vergütete Baustähle (EN 10025-6) ──
+    "Hochfeste Baustähle (QL)": {
+        "S460Q (1.8908) — EN 10025-6":    {"yield_strength": 460, "tensile_strength": 550, "density": 7.85},
+        "S460QL (1.8906) — EN 10025-6":   {"yield_strength": 460, "tensile_strength": 550, "density": 7.85},
+        "S460QL1 (1.8916) — EN 10025-6":  {"yield_strength": 460, "tensile_strength": 550, "density": 7.85},
+        "S500Q (1.8924) — EN 10025-6":    {"yield_strength": 500, "tensile_strength": 590, "density": 7.85},
+        "S500QL (1.8909) — EN 10025-6":   {"yield_strength": 500, "tensile_strength": 590, "density": 7.85},
+        "S500QL1 (1.8984) — EN 10025-6":  {"yield_strength": 500, "tensile_strength": 590, "density": 7.85},
+        "S550Q (1.8904) — EN 10025-6":    {"yield_strength": 550, "tensile_strength": 640, "density": 7.85},
+        "S550QL (1.8926) — EN 10025-6":   {"yield_strength": 550, "tensile_strength": 640, "density": 7.85},
+        "S620Q (1.8914) — EN 10025-6":    {"yield_strength": 620, "tensile_strength": 700, "density": 7.85},
+        "S620QL (1.8927) — EN 10025-6":   {"yield_strength": 620, "tensile_strength": 700, "density": 7.85},
+        "S690Q (1.8931) — EN 10025-6":    {"yield_strength": 690, "tensile_strength": 770, "density": 7.85},
+        "S690QL (1.8928) — EN 10025-6":   {"yield_strength": 690, "tensile_strength": 770, "density": 7.85},
+        "S690QL1 (1.8988) — EN 10025-6":  {"yield_strength": 690, "tensile_strength": 770, "density": 7.85},
+        "S890QL (1.8983) — EN 10025-6":   {"yield_strength": 890, "tensile_strength": 940, "density": 7.85},
+        "S890QL1 (1.8985) — EN 10025-6":  {"yield_strength": 890, "tensile_strength": 940, "density": 7.85},
+        "S960QL (1.8933) — EN 10025-6":   {"yield_strength": 960, "tensile_strength": 980, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Warmgewalzte höherfeste Stähle (EN 10149-2) ──
+    "Höherfeste Stähle zum Kaltumformen": {
+        "S315MC (1.0972) — EN 10149-2":   {"yield_strength": 315, "tensile_strength": 390, "density": 7.85},
+        "S355MC (1.0976) — EN 10149-2":   {"yield_strength": 355, "tensile_strength": 430, "density": 7.85},
+        "S420MC (1.0980) — EN 10149-2":   {"yield_strength": 420, "tensile_strength": 480, "density": 7.85},
+        "S460MC (1.0982) — EN 10149-2":   {"yield_strength": 460, "tensile_strength": 520, "density": 7.85},
+        "S500MC (1.0984) — EN 10149-2":   {"yield_strength": 500, "tensile_strength": 550, "density": 7.85},
+        "S550MC (1.0986) — EN 10149-2":   {"yield_strength": 550, "tensile_strength": 600, "density": 7.85},
+        "S600MC (1.8969) — EN 10149-2":   {"yield_strength": 600, "tensile_strength": 650, "density": 7.85},
+        "S650MC (1.8976) — EN 10149-2":   {"yield_strength": 650, "tensile_strength": 700, "density": 7.85},
+        "S700MC (1.8974) — EN 10149-2":   {"yield_strength": 700, "tensile_strength": 750, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Druckbehälterstähle (EN 10028-2/3/7) ──
+    "Druckbehälterstähle": {
+        "P235GH (1.0345) — EN 10028-2":        {"yield_strength": 235, "tensile_strength": 360, "density": 7.85},
+        "P265GH (1.0425) — EN 10028-2":        {"yield_strength": 265, "tensile_strength": 410, "density": 7.85},
+        "P295GH (1.0481) — EN 10028-2":        {"yield_strength": 295, "tensile_strength": 460, "density": 7.85},
+        "P355GH (1.0473) — EN 10028-2":        {"yield_strength": 355, "tensile_strength": 490, "density": 7.85},
+        "16Mo3 (1.5415) — EN 10028-2":         {"yield_strength": 270, "tensile_strength": 440, "density": 7.85},
+        "13CrMo4-5 (1.7335) — EN 10028-2":    {"yield_strength": 290, "tensile_strength": 440, "density": 7.85},
+        "10CrMo9-10 (1.7380) — EN 10028-2":   {"yield_strength": 280, "tensile_strength": 450, "density": 7.85},
+        "P275NH (1.0487) — EN 10028-3":        {"yield_strength": 275, "tensile_strength": 390, "density": 7.85},
+        "P355NH (1.0565) — EN 10028-3":        {"yield_strength": 355, "tensile_strength": 490, "density": 7.85},
+        "P355NL1 (1.0566) — EN 10028-3":       {"yield_strength": 355, "tensile_strength": 490, "density": 7.85},
+        "P460NH (1.8935) — EN 10028-3":        {"yield_strength": 460, "tensile_strength": 560, "density": 7.85},
+        "P460NL1 (1.8915) — EN 10028-3":       {"yield_strength": 460, "tensile_strength": 560, "density": 7.85},
+        "X7Ni9 (1.5663) — EN 10028-4":         {"yield_strength": 390, "tensile_strength": 640, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Warmfeste Stähle (EN 10216-2, EN 10222) ──
+    "Warmfeste Stähle": {
+        "P235GH (1.0345) — EN 10216-2":          {"yield_strength": 235, "tensile_strength": 360, "density": 7.85},
+        "P250GH (1.0460) — EN 10216-2":          {"yield_strength": 250, "tensile_strength": 400, "density": 7.85},
+        "16Mo3 (1.5415) — EN 10216-2":           {"yield_strength": 270, "tensile_strength": 440, "density": 7.85},
+        "13CrMo4-5 (1.7335) — EN 10216-2":      {"yield_strength": 290, "tensile_strength": 440, "density": 7.85},
+        "10CrMo9-10 (1.7380) — EN 10216-2":     {"yield_strength": 280, "tensile_strength": 450, "density": 7.85},
+        "X11CrMo9-1 (1.7386) — EN 10216-2":     {"yield_strength": 280, "tensile_strength": 480, "density": 7.85},
+        "X10CrMoVNb9-1 (1.4903) — EN 10216-2":  {"yield_strength": 450, "tensile_strength": 630, "density": 7.76},
+        "X20CrMoV11-1 (1.4922) — EN 10216-2":   {"yield_strength": 490, "tensile_strength": 690, "density": 7.70},
+        "7CrWVMoNb9-6 (1.8201) — EN 10216-2":   {"yield_strength": 450, "tensile_strength": 620, "density": 7.75},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Nichtrostende Stähle — austenitisch (EN 10088-2) ──
+    "Nichtrostende Stähle (austenitisch)": {
+        "X2CrNi18-9 (1.4307) — EN 10088-2":           {"yield_strength": 200, "tensile_strength": 500, "density": 7.90},
+        "X5CrNi18-10 (1.4301) — EN 10088-2":          {"yield_strength": 210, "tensile_strength": 520, "density": 7.90},
+        "X8CrNiS18-9 (1.4305) — EN 10088-2":          {"yield_strength": 190, "tensile_strength": 500, "density": 7.90},
+        "X6CrNiTi18-10 (1.4541) — EN 10088-2":        {"yield_strength": 200, "tensile_strength": 500, "density": 7.90},
+        "X6CrNiNb18-10 (1.4550) — EN 10088-2":        {"yield_strength": 200, "tensile_strength": 500, "density": 7.90},
+        "X2CrNiMo17-12-2 (1.4404) — EN 10088-2":      {"yield_strength": 220, "tensile_strength": 520, "density": 8.00},
+        "X5CrNiMo17-12-2 (1.4401) — EN 10088-2":      {"yield_strength": 220, "tensile_strength": 520, "density": 8.00},
+        "X6CrNiMoTi17-12-2 (1.4571) — EN 10088-2":    {"yield_strength": 220, "tensile_strength": 520, "density": 8.00},
+        "X2CrNiMo18-14-3 (1.4435) — EN 10088-2":      {"yield_strength": 220, "tensile_strength": 520, "density": 8.00},
+        "X2CrNiMoN17-13-3 (1.4429) — EN 10088-2":     {"yield_strength": 280, "tensile_strength": 580, "density": 8.00},
+        "X1CrNiMoN25-22-2 (1.4466) — EN 10088-2":     {"yield_strength": 300, "tensile_strength": 600, "density": 8.00},
+        "X1NiCrMoCu25-20-5 (1.4539) — EN 10088-2":    {"yield_strength": 220, "tensile_strength": 520, "density": 8.00},
+        "X2CrNiMoN17-13-5 (1.4439) — EN 10088-2":     {"yield_strength": 270, "tensile_strength": 580, "density": 8.00},
+        "X1NiCrMoCuN20-18-7 (1.4547) — EN 10088-2":   {"yield_strength": 300, "tensile_strength": 650, "density": 8.10},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Nichtrostende Stähle — ferritisch (EN 10088-2) ──
+    "Nichtrostende Stähle (ferritisch)": {
+        "X2CrNi12 (1.4003) — EN 10088-2":             {"yield_strength": 250, "tensile_strength": 450, "density": 7.70},
+        "X6Cr17 (1.4016) — EN 10088-2":               {"yield_strength": 260, "tensile_strength": 430, "density": 7.70},
+        "X3CrTi17 (1.4510) — EN 10088-2":             {"yield_strength": 230, "tensile_strength": 420, "density": 7.70},
+        "X2CrMoTi18-2 (1.4521) — EN 10088-2":         {"yield_strength": 300, "tensile_strength": 420, "density": 7.70},
+        "X6CrMoS17 (1.4105) — EN 10088-2":            {"yield_strength": 260, "tensile_strength": 430, "density": 7.70},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Nichtrostende Stähle — martensitisch (EN 10088-2) ──
+    "Nichtrostende Stähle (martensitisch)": {
+        "X12Cr13 (1.4006) — EN 10088-2":               {"yield_strength": 400, "tensile_strength": 650, "density": 7.70},
+        "X20Cr13 (1.4021) — EN 10088-2":               {"yield_strength": 500, "tensile_strength": 700, "density": 7.70},
+        "X30Cr13 (1.4028) — EN 10088-2":               {"yield_strength": 600, "tensile_strength": 800, "density": 7.70},
+        "X17CrNi16-2 (1.4057) — EN 10088-2":          {"yield_strength": 550, "tensile_strength": 750, "density": 7.70},
+        "X3CrNiMo13-4 (1.4313) — EN 10088-2":         {"yield_strength": 580, "tensile_strength": 780, "density": 7.70},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Nichtrostende Stähle — Duplex/Super-Duplex (EN 10088-2) ──
+    "Nichtrostende Stähle (Duplex)": {
+        "X2CrNiN23-4 (1.4362) — EN 10088-2":          {"yield_strength": 400, "tensile_strength": 600, "density": 7.80},
+        "X2CrNiMoN22-5-3 (1.4462) — EN 10088-2":     {"yield_strength": 450, "tensile_strength": 650, "density": 7.80},
+        "X2CrNiMoSi18-5-3 (1.4424) — EN 10088-2":    {"yield_strength": 450, "tensile_strength": 650, "density": 7.80},
+        "X2CrNiMoN25-7-4 (1.4410) — EN 10088-2":     {"yield_strength": 530, "tensile_strength": 730, "density": 7.80},
+        "X2CrNiMoCuWN25-7-4 (1.4501) — EN 10088-2":  {"yield_strength": 530, "tensile_strength": 730, "density": 7.85},
+        "X2CrMnNiN21-5-1 (1.4162) — EN 10088-2":     {"yield_strength": 450, "tensile_strength": 650, "density": 7.80},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Rohrleitungsstähle (EN 10208-2 / API 5L) ──
+    "Rohrleitungsstähle": {
+        "L210GA (1.0308) — EN 10208-2":                  {"yield_strength": 210, "tensile_strength": 335, "density": 7.85},
+        "L245NB (1.0457) — EN 10208-2 / API 5L Gr B":   {"yield_strength": 245, "tensile_strength": 415, "density": 7.85},
+        "L290NB (1.0484) — EN 10208-2 / API 5L X42":    {"yield_strength": 290, "tensile_strength": 415, "density": 7.85},
+        "L360NB (1.0582) — EN 10208-2 / API 5L X52":    {"yield_strength": 360, "tensile_strength": 460, "density": 7.85},
+        "L390MB (1.8960) — EN 10208-2 / API 5L X56":    {"yield_strength": 390, "tensile_strength": 490, "density": 7.85},
+        "L415NB (1.8972) — EN 10208-2 / API 5L X60":    {"yield_strength": 415, "tensile_strength": 520, "density": 7.85},
+        "L450MB (1.8975) — EN 10208-2 / API 5L X65":    {"yield_strength": 450, "tensile_strength": 535, "density": 7.85},
+        "L485MB (1.8977) — EN 10208-2 / API 5L X70":    {"yield_strength": 485, "tensile_strength": 570, "density": 7.85},
+        "L555MB (1.8978) — EN 10208-2 / API 5L X80":    {"yield_strength": 555, "tensile_strength": 625, "density": 7.85},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Aluminium-Knetlegierungen (EN 573-3, EN 485, EN 755) ──
+    "Aluminium-Knetlegierungen": {
+        "EN AW-1050A (Al 99.5) H14 — EN 573-3":     {"yield_strength": 85,  "tensile_strength": 105, "density": 2.71},
+        "EN AW-1100 (Al 99.0Cu) H14 — EN 573-3":    {"yield_strength": 95,  "tensile_strength": 110, "density": 2.71},
+        "EN AW-2017A T4 (AlCu4MgSi) — EN 573-3":    {"yield_strength": 270, "tensile_strength": 420, "density": 2.79},
+        "EN AW-2024 T3 (AlCu4Mg1) — EN 573-3":      {"yield_strength": 345, "tensile_strength": 485, "density": 2.78},
+        "EN AW-3003 H14 (AlMn1Cu) — EN 573-3":       {"yield_strength": 120, "tensile_strength": 145, "density": 2.73},
+        "EN AW-5005 H34 (AlMg1) — EN 573-3":         {"yield_strength": 120, "tensile_strength": 145, "density": 2.70},
+        "EN AW-5052 H32 (AlMg2.5) — EN 573-3":       {"yield_strength": 160, "tensile_strength": 230, "density": 2.68},
+        "EN AW-5083 H111 (AlMg4.5Mn) — EN 573-3":    {"yield_strength": 125, "tensile_strength": 275, "density": 2.66},
+        "EN AW-5086 H116 (AlMg4) — EN 573-3":        {"yield_strength": 195, "tensile_strength": 275, "density": 2.66},
+        "EN AW-5754 H22 (AlMg3) — EN 573-3":         {"yield_strength": 130, "tensile_strength": 220, "density": 2.67},
+        "EN AW-6060 T6 (AlMgSi) — EN 573-3":         {"yield_strength": 150, "tensile_strength": 190, "density": 2.70},
+        "EN AW-6061 T6 (AlMg1SiCu) — EN 573-3":      {"yield_strength": 275, "tensile_strength": 310, "density": 2.70},
+        "EN AW-6063 T6 (AlMg0.7Si) — EN 573-3":       {"yield_strength": 170, "tensile_strength": 215, "density": 2.70},
+        "EN AW-6082 T6 (AlSi1MgMn) — EN 573-3":       {"yield_strength": 260, "tensile_strength": 310, "density": 2.71},
+        "EN AW-7020 T6 (AlZn4.5Mg1) — EN 573-3":      {"yield_strength": 280, "tensile_strength": 350, "density": 2.78},
+        "EN AW-7075 T6 (AlZn5.5MgCu) — EN 573-3":     {"yield_strength": 503, "tensile_strength": 572, "density": 2.81},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Aluminium-Gusslegierungen (EN 1706) ──
+    "Aluminium-Gusslegierungen": {
+        "EN AC-42100 (AlSi7Mg0.3) T6 — EN 1706":    {"yield_strength": 210, "tensile_strength": 260, "density": 2.68},
+        "EN AC-42200 (AlSi7Mg0.6) T6 — EN 1706":    {"yield_strength": 240, "tensile_strength": 290, "density": 2.68},
+        "EN AC-43000 (AlSi10Mg) F — EN 1706":        {"yield_strength": 90,  "tensile_strength": 180, "density": 2.65},
+        "EN AC-44200 (AlSi12) F — EN 1706":          {"yield_strength": 80,  "tensile_strength": 170, "density": 2.65},
+        "EN AC-46200 (AlSi8Cu3) F — EN 1706":        {"yield_strength": 100, "tensile_strength": 200, "density": 2.75},
+        "EN AC-51300 (AlMg5) F — EN 1706":           {"yield_strength": 110, "tensile_strength": 200, "density": 2.65},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Nickellegierungen (EN 10095, ASTM / UNS) ──
+    "Nickellegierungen": {
+        "Alloy 200 / Ni 200 (2.4066) — UNS N02200":          {"yield_strength": 100, "tensile_strength": 380, "density": 8.89},
+        "Alloy 201 / Ni 201 (2.4068) — UNS N02201":          {"yield_strength": 70,  "tensile_strength": 345, "density": 8.89},
+        "Alloy 400 / Monel 400 (2.4360) — UNS N04400":       {"yield_strength": 230, "tensile_strength": 550, "density": 8.83},
+        "Alloy K-500 / Monel K-500 (2.4375) — UNS N05500":   {"yield_strength": 690, "tensile_strength": 1000, "density": 8.44},
+        "Alloy 600 / Inconel 600 (2.4816) — UNS N06600":     {"yield_strength": 240, "tensile_strength": 550, "density": 8.47},
+        "Alloy 601 / Inconel 601 (2.4851) — UNS N06601":     {"yield_strength": 205, "tensile_strength": 550, "density": 8.11},
+        "Alloy 617 / Inconel 617 (2.4663) — UNS N06617":     {"yield_strength": 295, "tensile_strength": 655, "density": 8.36},
+        "Alloy 625 / Inconel 625 (2.4856) — UNS N06625":     {"yield_strength": 414, "tensile_strength": 827, "density": 8.44},
+        "Alloy 718 / Inconel 718 (2.4668) — UNS N07718":     {"yield_strength": 1034, "tensile_strength": 1241, "density": 8.19},
+        "Alloy 825 / Incoloy 825 (2.4858) — UNS N08825":     {"yield_strength": 241, "tensile_strength": 586, "density": 8.14},
+        "Alloy C-276 / Hastelloy C-276 (2.4819) — UNS N10276":  {"yield_strength": 310, "tensile_strength": 690, "density": 8.89},
+        "Alloy C-22 / Hastelloy C-22 (2.4602) — UNS N06022":   {"yield_strength": 310, "tensile_strength": 690, "density": 8.69},
+        "Alloy B-2 / Hastelloy B-2 (2.4617) — UNS N10665":     {"yield_strength": 345, "tensile_strength": 760, "density": 9.22},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Titanlegierungen (ASTM B265, ISO 5832) ──
+    "Titanlegierungen": {
+        "Ti Grade 1 (3.7025) — ASTM B265":            {"yield_strength": 170, "tensile_strength": 240, "density": 4.51},
+        "Ti Grade 2 (3.7035) — ASTM B265":            {"yield_strength": 275, "tensile_strength": 345, "density": 4.51},
+        "Ti Grade 3 (3.7055) — ASTM B265":            {"yield_strength": 380, "tensile_strength": 450, "density": 4.51},
+        "Ti Grade 4 (3.7065) — ASTM B265":            {"yield_strength": 480, "tensile_strength": 550, "density": 4.51},
+        "Ti Grade 7 (3.7235) — ASTM B265":            {"yield_strength": 275, "tensile_strength": 345, "density": 4.51},
+        "Ti Grade 12 (3.7105) — ASTM B265":           {"yield_strength": 345, "tensile_strength": 480, "density": 4.51},
+        "Ti-6Al-4V Grade 5 (3.7164) — ASTM B265":    {"yield_strength": 880, "tensile_strength": 950, "density": 4.43},
+        "Ti-6Al-4V ELI Grade 23 (3.7165) — ASTM B265": {"yield_strength": 795, "tensile_strength": 860, "density": 4.43},
+        "Ti-3Al-2.5V Grade 9 (3.7195) — ASTM B265":  {"yield_strength": 485, "tensile_strength": 620, "density": 4.48},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
+    },
+    # ── Kupferlegierungen (EN 1652, EN 12163, EN 12420) ──
+    "Kupferlegierungen": {
+        "Cu-OF (CW008A) R220 — EN 1652":              {"yield_strength": 50,  "tensile_strength": 220, "density": 8.94},
+        "Cu-DHP (CW024A) R220 — EN 1652":             {"yield_strength": 60,  "tensile_strength": 220, "density": 8.90},
+        "CuZn37 (CW508L) R370 — EN 12163":            {"yield_strength": 180, "tensile_strength": 370, "density": 8.44},
+        "CuZn39Pb3 (CW614N) R400 — EN 12163":         {"yield_strength": 200, "tensile_strength": 400, "density": 8.47},
+        "CuSn6 (CW452K) R400 — EN 1652":              {"yield_strength": 200, "tensile_strength": 400, "density": 8.80},
+        "CuSn8 (CW453K) R470 — EN 1652":              {"yield_strength": 270, "tensile_strength": 470, "density": 8.80},
+        "CuAl8Fe3 (CW304G) R550 — EN 12163":          {"yield_strength": 250, "tensile_strength": 550, "density": 7.60},
+        "CuAl10Ni5Fe4 (CW307G) R640 — EN 12163":      {"yield_strength": 300, "tensile_strength": 640, "density": 7.58},
+        "CuNi10Fe1Mn (CW352H) R350 — EN 1652":        {"yield_strength": 120, "tensile_strength": 350, "density": 8.90},
+        "CuNi30Mn1Fe (CW354H) R400 — EN 1652":        {"yield_strength": 150, "tensile_strength": 400, "density": 8.95},
+        "Benutzerdefiniert": {"yield_strength": None, "tensile_strength": None, "density": None},
     },
 }
 
@@ -173,7 +342,9 @@ def _render_basismaterial_tab(state):
         material_group = st.radio(
             "Werkstoffgruppe:",
             list(MATERIALS_DB.keys()),
-            index=list(MATERIALS_DB.keys()).index(state.base_metal.get("material_group", "Stähle")),
+            index=list(MATERIALS_DB.keys()).index(state.base_metal.get("material_group", "Unlegierte Baustähle"))
+            if state.base_metal.get("material_group", "Unlegierte Baustähle") in MATERIALS_DB
+            else 0,
         )
         state.base_metal["material_group"] = material_group
 
@@ -205,11 +376,50 @@ def _render_basismaterial_tab(state):
             **Werkstoffeigenschaften:**
             - Streckgrenze: {props['yield_strength']} MPa
             - Zugfestigkeit: {props['tensile_strength']} MPa
-            - Dichte: {props['density']} kg/m³
+            - Dichte: {props['density']} kg/dm\u00b3
             """
             st.info(info_text)
     else:
-        st.info("Benutzerdefinierter Werkstoff: Bitte geben Sie die Werkstoffeigenschaften ein")
+        custom_name = st.text_input(
+            "Werkstoffbezeichnung:",
+            value=state.base_metal.get("designation", ""),
+            key="custom_designation",
+            placeholder="z.B. X5CrNi13-4 (1.4313)",
+        )
+        state.base_metal["designation"] = custom_name
+        st.markdown("**Werkstoffeigenschaften:**")
+        custom = state.base_metal.get("custom_props", {})
+        col_a, col_b, col_c = st.columns(3)
+        with col_a:
+            ys = st.number_input(
+                "Streckgrenze (MPa):",
+                min_value=0.0, max_value=3000.0,
+                value=float(custom.get("yield_strength", 0.0)),
+                step=5.0, key="custom_yield",
+            )
+        with col_b:
+            ts = st.number_input(
+                "Zugfestigkeit (MPa):",
+                min_value=0.0, max_value=3000.0,
+                value=float(custom.get("tensile_strength", 0.0)),
+                step=5.0, key="custom_tensile",
+            )
+        with col_c:
+            raw_dens = float(custom.get("density", 7.85))
+            # Migrate old kg/m³ values to kg/dm³
+            if raw_dens > 25.0:
+                raw_dens = raw_dens / 1000.0
+            dens = st.number_input(
+                "Dichte (kg/dm\u00b3):",
+                min_value=0.0, max_value=25.0,
+                value=raw_dens,
+                step=0.01, key="custom_density", format="%.2f",
+            )
+        state.base_metal["custom_props"] = {
+            "yield_strength": ys,
+            "tensile_strength": ts,
+            "density": dens,
+        }
 
 
 def _render_groove_tab(state):
