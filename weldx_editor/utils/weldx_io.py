@@ -23,6 +23,7 @@ Adapted to the real RoboScope WeldX export structure:
       shielding_gas: {torch_shielding_gas: {common_name, gas_component}, torch_shielding_gas_flowrate}
       welding_process: {tag, base_process, manufacturer, power_source, parameters}
 """
+import io
 import tempfile
 import os
 from pathlib import Path
@@ -655,13 +656,13 @@ def _extract_workpiece_meshes(csm, root: str, state: WeldxFileState):
                 continue
 
             try:
-                # Get vertices
+                # Get vertices (raw, in node CS)
                 verts = scan_obj.coordinates
                 if hasattr(verts, "magnitude"):
                     verts = verts.magnitude
                 elif hasattr(verts, "values"):
                     verts = verts.values
-                verts = np.asarray(verts)
+                raw_verts = np.asarray(verts)
 
                 # Get triangles
                 tris = scan_obj.triangles
@@ -669,7 +670,8 @@ def _extract_workpiece_meshes(csm, root: str, state: WeldxFileState):
                     tris = tris.values
                 tris = np.asarray(tris)
 
-                # Transform vertices from node CS to root CS
+                # Transform vertices from node CS to root CS for visualization
+                viz_verts = raw_verts
                 if node_name != root:
                     try:
                         with warnings.catch_warnings():
@@ -679,17 +681,20 @@ def _extract_workpiece_meshes(csm, root: str, state: WeldxFileState):
                         if hasattr(coords, "magnitude"):
                             coords = coords.magnitude
                         orient = lcs.orientation.values
-                        # Apply rotation + translation
                         R = orient[0] if orient.ndim > 2 else orient
                         t = coords[0] if coords.ndim > 1 else coords
-                        verts = verts @ R.T + t
+                        viz_verts = raw_verts @ R.T + t
                     except Exception:
                         pass
 
                 state.workpiece_meshes.append({
                     "name": f"{node_name}/{scan_name}",
-                    "vertices": verts,
+                    "scan_name": scan_name,
+                    "target_cs": node_name,
+                    "vertices": viz_verts,
+                    "raw_vertices": raw_verts,
                     "triangles": tris,
+                    "visible": True,
                 })
             except Exception:
                 continue
@@ -1143,6 +1148,140 @@ def _update_completion(state: WeldxFileState):
         state.completion["quality"] = {"status": "missing", "detail": "Keine Bewertungsgruppe"}
 
 
+# ─── Mesh I/O (STL, NPZ) + Add/Remove ────────────────────────
+
+def parse_mesh_bytes(file_bytes: bytes, filename: str) -> tuple:
+    """Parse uploaded mesh file into (vertices [N,3] float64, triangles [M,3] int64).
+
+    Supports binary and ASCII STL, plus NPZ files containing 'vertices' and
+    'triangles' arrays. Vertex coordinates are interpreted as millimetres.
+    """
+    suffix = Path(filename).suffix.lower()
+    if suffix == ".npz":
+        with io.BytesIO(file_bytes) as buf:
+            npz = np.load(buf, allow_pickle=False)
+            if "vertices" not in npz or "triangles" not in npz:
+                raise ValueError("NPZ muss 'vertices' und 'triangles' enthalten.")
+            verts = np.asarray(npz["vertices"], dtype=np.float64).reshape(-1, 3)
+            tris = np.asarray(npz["triangles"], dtype=np.int64).reshape(-1, 3)
+        return verts, tris
+    if suffix == ".stl":
+        return _parse_stl_bytes(file_bytes)
+    raise ValueError(f"Format nicht unterstützt: {suffix}. Erlaubt: .stl, .npz")
+
+
+def _parse_stl_bytes(data: bytes) -> tuple:
+    """Parse STL bytes (auto-detect binary vs ASCII)."""
+    is_binary = False
+    if len(data) >= 84:
+        n_tris = int.from_bytes(data[80:84], "little")
+        if len(data) == 84 + 50 * n_tris:
+            is_binary = True
+    if not is_binary:
+        head = data[:512].lstrip().lower()
+        if not head.startswith(b"solid") or b"facet" not in head:
+            is_binary = True
+
+    if is_binary:
+        n_tris = int.from_bytes(data[80:84], "little")
+        rec = np.frombuffer(
+            data, offset=84, count=n_tris,
+            dtype=np.dtype([
+                ("normal", "<f4", 3),
+                ("v", "<f4", (3, 3)),
+                ("attr", "<u2"),
+            ]),
+        )
+        flat = rec["v"].reshape(-1, 3).astype(np.float64)
+    else:
+        text = data.decode("utf-8", errors="ignore")
+        coords = []
+        for line in text.splitlines():
+            s = line.strip()
+            if s.startswith("vertex"):
+                parts = s.split()
+                if len(parts) >= 4:
+                    coords.append([float(parts[1]), float(parts[2]), float(parts[3])])
+        if len(coords) % 3 != 0:
+            raise ValueError("ASCII-STL: Vertex-Anzahl ist kein Vielfaches von 3.")
+        flat = np.asarray(coords, dtype=np.float64)
+
+    # Deduplicate vertices
+    verts, inverse = np.unique(flat, axis=0, return_inverse=True)
+    tris = inverse.reshape(-1, 3).astype(np.int64)
+    return verts, tris
+
+
+def add_workpiece_mesh(
+    state: WeldxFileState,
+    scan_name: str,
+    target_cs: str,
+    vertices: np.ndarray,
+    triangles: np.ndarray,
+) -> dict:
+    """Add a 3D mesh to state.workpiece_meshes attached to ``target_cs``.
+
+    Vertices are interpreted in the frame of ``target_cs``. A transformed copy
+    in the CSM root frame is computed for visualization, when a CSM is loaded.
+    """
+    raw = np.asarray(vertices, dtype=np.float64).reshape(-1, 3)
+    tris = np.asarray(triangles, dtype=np.int64).reshape(-1, 3)
+
+    # Ensure scan_name is unique within current state
+    existing = {m.get("scan_name") for m in state.workpiece_meshes}
+    base = scan_name or "scan"
+    name = base
+    i = 0
+    while name in existing:
+        i += 1
+        name = f"{base}_{i}"
+
+    viz = _transform_verts_to_root(state._csm, target_cs, raw)
+
+    mesh = {
+        "name": f"{target_cs}/{name}",
+        "scan_name": name,
+        "target_cs": target_cs,
+        "vertices": viz,
+        "raw_vertices": raw,
+        "triangles": tris,
+        "visible": True,
+    }
+    state.workpiece_meshes.append(mesh)
+    return mesh
+
+
+def remove_workpiece_mesh(state: WeldxFileState, index: int) -> bool:
+    """Remove a mesh by index from state.workpiece_meshes. Returns True on success."""
+    if 0 <= index < len(state.workpiece_meshes):
+        state.workpiece_meshes.pop(index)
+        return True
+    return False
+
+
+def _transform_verts_to_root(csm, target_cs: Optional[str], verts: np.ndarray) -> np.ndarray:
+    """Transform vertices from ``target_cs`` into the CSM root frame."""
+    if csm is None or not target_cs:
+        return verts
+    root = getattr(csm, "root_system_name", None)
+    if not root or target_cs == root:
+        return verts
+    try:
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            lcs = csm.get_cs(target_cs, root)
+        coords = lcs.coordinates.values
+        if hasattr(coords, "magnitude"):
+            coords = coords.magnitude
+        orient = lcs.orientation.values
+        R = orient[0] if orient.ndim > 2 else orient
+        t = coords[0] if coords.ndim > 1 else coords
+        return verts @ R.T + t
+    except Exception:
+        return verts
+
+
 # ─── Saving ──────────────────────────────────────────────────
 
 def save_weldx_file(state: WeldxFileState, output_path: str):
@@ -1180,9 +1319,87 @@ def save_weldx_file(state: WeldxFileState, output_path: str):
             if "welding_wire" not in proc:
                 proc["welding_wire"] = state.filler_material
 
+    # Sync 3D meshes (workpiece scans) into the CSM
+    _sync_meshes_into_csm(state, out_tree)
+
     wx = WeldxFile(tree=out_tree, mode="rw")
     wx.write_to(output_path, all_array_compression="zlib")
     return output_path
+
+
+def _sync_meshes_into_csm(state: WeldxFileState, out_tree: dict):
+    """Replace SpatialData entries in the CSM to match state.workpiece_meshes."""
+    try:
+        from weldx import CoordinateSystemManager, LocalCoordinateSystem, SpatialData, Q_
+    except ImportError:
+        return
+
+    # Find or build a CSM
+    csm = None
+    csm_key = None
+    for key in ("coordinate_systems", "csm", "coordinate_system_manager"):
+        val = out_tree.get(key)
+        if isinstance(val, CoordinateSystemManager):
+            csm = val
+            csm_key = key
+            break
+    if csm is None:
+        csm = state._csm if isinstance(state._csm, CoordinateSystemManager) else None
+        csm_key = "coordinate_systems"
+
+    # No CSM and no meshes: nothing to do
+    if csm is None and not state.workpiece_meshes:
+        return
+
+    # No CSM but we have meshes: build a minimal one
+    if csm is None:
+        csm = CoordinateSystemManager("user_frame")
+        if "workpiece" not in csm.coordinate_system_names:
+            csm.add_cs("workpiece", "user_frame", LocalCoordinateSystem())
+
+    # Strip all existing SpatialData from the CSM so we can re-attach in sync
+    g = csm.graph
+    to_delete = []
+    for node_name in list(csm.coordinate_system_names):
+        node_data = g.nodes.get(node_name, {}).get("data", {})
+        if isinstance(node_data, dict):
+            for dname, dval in node_data.items():
+                if isinstance(dval, SpatialData):
+                    to_delete.append(dname)
+    for dname in to_delete:
+        try:
+            csm.delete_data(dname)
+        except Exception:
+            pass
+
+    # Re-attach meshes from state
+    used_names = set()
+    for m in state.workpiece_meshes:
+        target = m.get("target_cs")
+        if not target or target not in csm.coordinate_system_names:
+            target = csm.root_system_name
+
+        verts = np.asarray(m.get("raw_vertices", m.get("vertices")), dtype=np.float64)
+        tris = np.asarray(m["triangles"], dtype=np.uint32)
+        if verts.size == 0 or tris.size == 0:
+            continue
+
+        # Ensure unique data name across the CSM
+        base = m.get("scan_name") or "scan"
+        name = base
+        i = 0
+        while name in used_names or name in getattr(csm, "data_names", []):
+            i += 1
+            name = f"{base}_{i}"
+        used_names.add(name)
+
+        try:
+            sd = SpatialData(coordinates=Q_(verts, "mm"), triangles=tris)
+            csm.assign_data(sd, name, target)
+        except Exception:
+            continue
+
+    out_tree[csm_key] = csm
 
 
 def get_tree_summary(state: WeldxFileState) -> dict:
