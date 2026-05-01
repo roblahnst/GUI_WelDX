@@ -69,6 +69,7 @@ def main():
         sys.executable, "-m", "streamlit", "run",
         app_path,
         "--server.headless=false",
+        "--server.runOnSave=true",
         "--theme.base=dark",
         "--theme.primaryColor=#4f8ef7",
         "--theme.backgroundColor=#0f1117",
