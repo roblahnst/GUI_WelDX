@@ -226,18 +226,35 @@ def _render_filler_material(state):
 
     # Diameter
     st.subheader("Drahtdurchmesser")
-    diameter_opts = [0.8, 1.0, 1.2, 1.6]
+    diameter_opts = [0.8, 1.0, 1.2, 1.6, "Benutzerdefiniert"]
     current_d = filler.get("diameter_mm", 1.2)
-    d_index = diameter_opts.index(current_d) if current_d in diameter_opts else 2
+    if current_d in diameter_opts:
+        d_index = diameter_opts.index(current_d)
+    else:
+        d_index = len(diameter_opts) - 1  # custom
 
-    diameter = st.radio(
+    selection = st.radio(
         "Durchmesser (mm)",
         options=diameter_opts,
         index=d_index,
         key="wire_diameter",
-        format_func=lambda x: f"{x} mm",
+        format_func=lambda x: f"{x} mm" if isinstance(x, (int, float)) else x,
         horizontal=True,
     )
+
+    if selection == "Benutzerdefiniert":
+        custom_default = float(current_d) if isinstance(current_d, (int, float)) else 1.2
+        diameter = st.number_input(
+            "Eigener Durchmesser (mm)",
+            min_value=0.1,
+            max_value=10.0,
+            step=0.1,
+            value=custom_default,
+            key="wire_diameter_custom",
+        )
+    else:
+        diameter = float(selection)
+
     state.filler_material["diameter_mm"] = diameter
 
     st.divider()
