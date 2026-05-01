@@ -138,15 +138,14 @@ def load_weldx_from_bytes(file_bytes: bytes, filename: str) -> WeldxFileState:
 # ─── Extraction: Time Series (data.*) ───────────────────────
 
 def _extract_measurements(state: WeldxFileState):
-    """Extract time series from tree['data'] or tree['measurements']."""
+    """Extract time series from tree['data'] and/or tree['measurements']."""
     tree = state.tree
 
-    # Primary: RoboScope puts time series under "data"
+    # RoboScope: time series under "data"
     if "data" in tree and isinstance(tree["data"], dict):
         for name, ts in tree["data"].items():
-            info = _describe_time_series(name, ts)
-            state.measurements[name] = info
-        return
+            if name not in state.measurements:
+                state.measurements[name] = _describe_time_series(name, ts)
 
     # Native weldx: "measurements" as list of Measurement objects
     if "measurements" in tree and isinstance(tree["measurements"], list):
@@ -159,21 +158,23 @@ def _extract_measurements(state: WeldxFileState):
             else:
                 ts = ts_list
             key = meas_name.replace(" ", "_")
+            if key in state.measurements:
+                continue
             info = _describe_time_series(meas_name, ts)
-            # Extract measurement chain details
             mc = getattr(meas, "measurement_chain", None)
             if mc is not None:
                 info["_measurement_chain"] = mc
                 info["chain"] = _describe_measurement_chain(mc)
             state.measurements[key] = info
+
+    if state.measurements:
         return
 
     # Fallback: "measurements" as dict (keyed by name)
     for key in ["measurements", "measurement_data"]:
         if key in tree and isinstance(tree[key], dict):
             for name, ts in tree[key].items():
-                info = _describe_time_series(name, ts)
-                state.measurements[name] = info
+                state.measurements[name] = _describe_time_series(name, ts)
             return
 
     # Fallback: individual known keys at top level
@@ -1282,6 +1283,89 @@ def _transform_verts_to_root(csm, target_cs: Optional[str], verts: np.ndarray) -
         return verts
 
 
+# ─── Path I/O (CSV trajectories) ─────────────────────────────
+
+def add_imported_path(
+    state: WeldxFileState,
+    name: str,
+    parent_cs: str,
+    points_xyz_mm: np.ndarray,
+    time_s: Optional[np.ndarray] = None,
+) -> dict:
+    """Add an imported 3D path as a time-dependent CS in state and (live) CSM.
+
+    Vertices are interpreted as millimetres in ``parent_cs``. If ``time_s`` is
+    ``None`` the sample index (in seconds) is used.
+    """
+    pts = np.asarray(points_xyz_mm, dtype=np.float64).reshape(-1, 3)
+    if pts.size == 0:
+        raise ValueError("Pfad enthält keine Punkte.")
+    if time_s is None or len(time_s) != len(pts):
+        t = np.arange(len(pts), dtype=np.float64)
+    else:
+        t = np.asarray(time_s, dtype=np.float64)
+
+    # Live update of the CSM if available
+    if WELDX_AVAILABLE:
+        try:
+            from weldx import LocalCoordinateSystem, CoordinateSystemManager, Q_
+            csm = state._csm
+            if csm is None:
+                csm = CoordinateSystemManager(parent_cs or "user_frame")
+                state._csm = csm
+            if parent_cs not in csm.coordinate_system_names:
+                csm.add_cs(parent_cs, csm.root_system_name, LocalCoordinateSystem())
+            # Ensure name is unique in the CSM
+            base = name or "path"
+            unique = base
+            i = 0
+            while unique in csm.coordinate_system_names:
+                i += 1
+                unique = f"{base}_{i}"
+            name = unique
+            lcs = LocalCoordinateSystem(
+                coordinates=Q_(pts, "mm"),
+                time=Q_(t, "s"),
+            )
+            csm.add_cs(name, parent_cs, lcs)
+        except Exception:
+            # Fall back: still keep the path in state.coordinate_systems
+            pass
+
+    info = {
+        "name": name,
+        "status": "complete",
+        "parent": parent_cs,
+        "is_time_dependent": True,
+        "translation": {
+            "x": float(pts[0, 0]),
+            "y": float(pts[0, 1]),
+            "z": float(pts[0, 2]),
+        },
+        "orientation": np.eye(3).tolist(),
+        "trajectory": pts,
+        "time_seconds": t,
+        "_imported_path": True,
+    }
+    state.coordinate_systems[name] = info
+    return info
+
+
+def remove_imported_path(state: WeldxFileState, name: str) -> bool:
+    """Remove an imported path from state and the live CSM."""
+    info = state.coordinate_systems.get(name)
+    if info is None or not info.get("_imported_path"):
+        return False
+    state.coordinate_systems.pop(name, None)
+    if WELDX_AVAILABLE and state._csm is not None:
+        try:
+            if name in state._csm.coordinate_system_names:
+                state._csm.delete_cs(name)
+        except Exception:
+            pass
+    return True
+
+
 # ─── Saving ──────────────────────────────────────────────────
 
 def save_weldx_file(state: WeldxFileState, output_path: str):
@@ -1322,9 +1406,50 @@ def save_weldx_file(state: WeldxFileState, output_path: str):
     # Sync 3D meshes (workpiece scans) into the CSM
     _sync_meshes_into_csm(state, out_tree)
 
+    # Persist user-imported time series into tree['data']
+    _sync_imported_measurements(state, out_tree)
+
     wx = WeldxFile(tree=out_tree, mode="rw")
     wx.write_to(output_path, all_array_compression="zlib")
     return output_path
+
+
+def _sync_imported_measurements(state: WeldxFileState, out_tree: dict):
+    """Write user-imported time series into out_tree['data'] as weldx TimeSeries."""
+    try:
+        from weldx import TimeSeries, Q_
+    except ImportError:
+        return
+
+    imported = {
+        k: v for k, v in getattr(state, "measurements", {}).items()
+        if isinstance(v, dict) and v.get("_imported")
+    }
+    if not imported:
+        return
+
+    data = out_tree.get("data")
+    if not isinstance(data, dict):
+        data = {}
+        out_tree["data"] = data
+
+    for key, info in imported.items():
+        values = info.get("values")
+        if values is None or len(values) == 0:
+            continue
+        unit = info.get("unit") or "dimensionless"
+        time_s = info.get("time_seconds")
+
+        try:
+            data_q = Q_(np.asarray(values, dtype=np.float64), unit)
+            if time_s is not None and len(time_s) == len(values):
+                t = np.asarray(time_s, dtype=np.float64)
+            else:
+                t = np.arange(len(values), dtype=np.float64)
+            ts = TimeSeries(data=data_q, time=Q_(t, "s"))
+            data[key] = ts
+        except Exception:
+            continue
 
 
 def _sync_meshes_into_csm(state: WeldxFileState, out_tree: dict):

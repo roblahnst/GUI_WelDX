@@ -25,33 +25,7 @@ def render_measurements(state):
     # ========== TAB 1: Zeitreihen-Daten ==========
     with tab1:
         st.subheader("Zeitreihen-Daten")
-
-        col_upload, col_info = st.columns([2, 1])
-        with col_upload:
-            uploaded_file = st.file_uploader(
-                "CSV Zeitreihen importieren",
-                type=['csv'],
-                key='timeseries_uploader'
-            )
-            if uploaded_file is not None:
-                try:
-                    df = pd.read_csv(uploaded_file)
-                    # Auto-detect measurement info
-                    name = uploaded_file.name.replace('.csv', '')
-                    state.measurements[name] = {
-                        'name': name,
-                        'status': 'importiert',
-                        'samples': len(df),
-                        'unit': 'A',  # Default unit
-                        'min': float(df.iloc[:, 0].min()) if len(df) > 0 else 0,
-                        'max': float(df.iloc[:, 0].max()) if len(df) > 0 else 0,
-                        'range': float(df.iloc[:, 0].max() - df.iloc[:, 0].min()) if len(df) > 0 else 0,
-                        'type': 'TimeSeries',
-                        'data': df
-                    }
-                    st.success(f"Datei '{name}' erfolgreich importiert ({len(df)} Samples)")
-                except Exception as e:
-                    st.error(f"Fehler beim Importieren: {str(e)}")
+        _render_csv_import(state)
 
         # Display existing measurements
         if state.measurements:
@@ -418,6 +392,177 @@ def _get_signal_color(name: str) -> str:
             return color
     palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
     return palette[hash(name) % len(palette)]
+
+
+_TIME_KEYWORDS = ("time", "zeit", "sec", "t_s", "tsec")
+_UNIT_PRESETS = ["A", "V", "m/min", "l/min", "mm/s", "°C", "kJ/cm", "Hz", "%", "—"]
+
+
+def _render_csv_help():
+    """Info expander explaining the expected CSV structure."""
+    with st.expander("ℹ️ CSV-Format & Beispiele"):
+        st.markdown(
+            """
+**Erwartet:** Komma-getrennte CSV mit einer Header-Zeile (UTF-8).
+
+**Spalten**
+- **Wertespalte** (Pflicht) – numerische Messwerte. Wird automatisch
+  erkannt; vor dem Import lässt sich eine andere Spalte wählen.
+- **Zeitspalte** (optional) – Zeit in **Sekunden**. Spalten mit Namen wie
+  `time`, `zeit`, `t_s`, `seconds` werden als Zeitachse erkannt. Ohne
+  Zeitspalte wird der Sample-Index (0, 1, 2, …) als Sekunden verwendet.
+- **Einheit** – wird vor dem Import ausgewählt (z. B. `A`, `V`, `m/min`,
+  `l/min`, `°C`).
+
+**Beispiel ohne Zeit:**
+
+```
+welding_current
+142.3
+145.1
+148.7
+146.2
+```
+
+**Beispiel mit Zeit (s, Werte in A):**
+
+```
+time_s,welding_current
+0.000,142.3
+0.001,145.1
+0.002,148.7
+0.003,146.2
+```
+
+Beim Speichern werden importierte Zeitreihen als `weldx.TimeSeries` in
+`tree['data']` der WelDX-Datei abgelegt — sie sind danach von jedem
+weldx-kompatiblen Tool lesbar.
+            """
+        )
+
+
+def _render_csv_import(state):
+    """File uploader + column/unit picker form for CSV time series."""
+    col_upload, col_info = st.columns([2, 1])
+    with col_upload:
+        uploaded_file = st.file_uploader(
+            "CSV Zeitreihen importieren",
+            type=["csv"],
+            key="timeseries_uploader",
+        )
+    with col_info:
+        _render_csv_help()
+
+    if uploaded_file is not None:
+        try:
+            df = pd.read_csv(uploaded_file)
+        except Exception as e:
+            st.error(f"CSV nicht lesbar: {e}")
+            df = None
+
+        if df is not None and not df.empty:
+            cols = list(df.columns)
+
+            # Auto-detect time column
+            time_default = None
+            for c in cols:
+                if any(k in str(c).lower() for k in _TIME_KEYWORDS):
+                    time_default = c
+                    break
+
+            # First numeric, non-time column → value default
+            value_default = None
+            for c in cols:
+                if c == time_default:
+                    continue
+                if pd.api.types.is_numeric_dtype(df[c]):
+                    value_default = c
+                    break
+            if value_default is None:
+                value_default = cols[0]
+
+            with st.form("csv_import_form", border=True):
+                st.markdown("**Vorschau (erste 5 Zeilen):**")
+                st.dataframe(df.head(), use_container_width=True)
+
+                col_v, col_t, col_u = st.columns([2, 2, 1])
+                with col_v:
+                    value_col = st.selectbox(
+                        "Wertespalte",
+                        cols,
+                        index=cols.index(value_default),
+                        help="Spalte mit den eigentlichen Messwerten.",
+                    )
+                with col_t:
+                    time_options = ["(keine — Sample-Index)"] + cols
+                    t_idx = time_options.index(time_default) if time_default in cols else 0
+                    time_col = st.selectbox(
+                        "Zeitspalte (s)",
+                        time_options,
+                        index=t_idx,
+                        help="Optional. Werte in Sekunden.",
+                    )
+                with col_u:
+                    unit = st.selectbox(
+                        "Einheit",
+                        _UNIT_PRESETS,
+                        index=0,
+                        help="Einheit der Wertespalte.",
+                    )
+
+                meas_default = uploaded_file.name.rsplit(".", 1)[0]
+                meas_name = st.text_input(
+                    "Messungsname",
+                    value=meas_default,
+                    help="Schlüssel in tree['data'] der WelDX-Datei.",
+                )
+
+                submitted = st.form_submit_button("Importieren", type="primary")
+
+            if submitted:
+                try:
+                    values = pd.to_numeric(df[value_col], errors="coerce").to_numpy(dtype=float)
+                    time_arr = None
+                    if time_col != "(keine — Sample-Index)":
+                        time_arr = pd.to_numeric(df[time_col], errors="coerce").to_numpy(dtype=float)
+
+                    if time_arr is not None:
+                        mask = ~(np.isnan(values) | np.isnan(time_arr))
+                        values = values[mask]
+                        time_arr = time_arr[mask]
+                    else:
+                        nan_mask = ~np.isnan(values)
+                        values = values[nan_mask]
+                        time_arr = np.arange(len(values), dtype=float)
+
+                    if values.size == 0:
+                        st.error("Keine numerischen Werte gefunden.")
+                    else:
+                        info = {
+                            "name": meas_name,
+                            "type": "TimeSeries",
+                            "status": "importiert",
+                            "unit": unit if unit != "—" else "",
+                            "values": values,
+                            "values_raw": values,
+                            "time_seconds": time_arr,
+                            "time_start": f"{time_arr[0]:.3f}s",
+                            "time_end": f"{time_arr[-1]:.3f}s",
+                            "samples": int(len(values)),
+                            "min": float(np.min(values)),
+                            "max": float(np.max(values)),
+                            "range": f"{float(np.min(values)):.2f} – {float(np.max(values)):.2f}",
+                            "outliers_removed": 0,
+                            "_imported": True,
+                        }
+                        state.measurements[meas_name] = info
+                        st.success(
+                            f"'{meas_name}' importiert: {len(values):,} Samples, "
+                            f"Bereich {info['range']} {info['unit']}"
+                        )
+                        st.rerun()
+                except Exception as e:
+                    st.error(f"Fehler beim Importieren: {e}")
 
 
 def _plot_measurements_overview(measurements: dict):

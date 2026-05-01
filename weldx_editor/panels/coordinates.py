@@ -430,18 +430,18 @@ def _render_3d_visualization(state):
             hoverinfo="name",
         ))
 
-    # ── Trajectories (TCP / design path) ──
+    # ── Trajectories (any time-dependent CS with multi-point path) ──
     for name, info in cs.items():
         traj = info.get("trajectory")
         if traj is None or not hasattr(traj, "shape") or traj.shape[0] < 2:
             continue
-        if not any(k in name.lower() for k in ("tcp", "tool", "trace", "design")):
-            continue
         pts = traj[::max(1, traj.shape[0] // 500)].astype(np.float64)
+        is_imported = info.get("_imported_path", False)
+        line_color = "#1565c0" if is_imported else "#cc0000"
         fig.add_trace(go.Scatter3d(
             x=pts[:, 0], y=pts[:, 1], z=pts[:, 2],
             mode="lines",
-            line=dict(color="#cc0000", width=4),
+            line=dict(color=line_color, width=4),
             name=f"{name} (Trajektorie)",
             hoverinfo="name",
         ))

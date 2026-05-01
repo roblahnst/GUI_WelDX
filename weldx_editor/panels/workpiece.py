@@ -1,6 +1,10 @@
 import streamlit as st
 import numpy as np
+import pandas as pd
 from weldx_editor.utils.style import COLORS
+from weldx_editor.utils.weldx_io import (
+    add_imported_path, remove_imported_path,
+)
 
 
 # Material database for different material groups
@@ -957,6 +961,260 @@ def _render_groove_tab(state):
         )
 
 
+_PATH_X_KEYS = ("x", "pos_x", "px", "x_mm", "tcp_x")
+_PATH_Y_KEYS = ("y", "pos_y", "py", "y_mm", "tcp_y")
+_PATH_Z_KEYS = ("z", "pos_z", "pz", "z_mm", "tcp_z")
+_PATH_TIME_KEYS = ("time", "zeit", "sec", "t_s", "tsec")
+_PATH_UNIT_PRESETS = ["mm", "m", "inch"]
+_UNIT_TO_MM = {"mm": 1.0, "m": 1000.0, "inch": 25.4}
+
+
+def _render_path_help():
+    """Info expander for the path-CSV format."""
+    with st.expander("ℹ️ CSV-Format & Beispiele"):
+        st.markdown(
+            """
+**Erwartet:** Komma-getrennte CSV mit einer Header-Zeile (UTF-8).
+
+**Spalten**
+- **X / Y / Z** (Pflicht) – Pfad-Punkte. Spalten mit Namen wie
+  `x`/`y`/`z`, `pos_x`/`pos_y`/`pos_z`, `tcp_x`/… werden automatisch
+  erkannt; vor dem Import lassen sich alle Spalten frei zuordnen.
+- **Zeitspalte** (optional) – Zeit in **Sekunden**. Spalten wie `time`,
+  `zeit`, `t_s`, `seconds` werden automatisch erkannt. Ohne Zeitspalte
+  wird der Sample-Index (0, 1, 2, …) als Sekunden verwendet.
+- **Position-Einheit** – Auswahl `mm` (Standard), `m`, `inch`. Werte
+  werden intern in mm umgerechnet.
+
+**Beispiel ohne Zeit (mm):**
+
+```
+x,y,z
+0.0,0.0,0.0
+10.5,0.0,0.0
+21.0,0.0,0.0
+31.5,0.0,0.0
+```
+
+**Beispiel mit Zeit (s, mm):**
+
+```
+time_s,x,y,z
+0.000,0.0,0.0,0.0
+0.100,10.5,0.0,0.0
+0.200,21.0,0.0,0.0
+0.300,31.5,0.0,0.0
+```
+
+Beim Import wird der Pfad als zeitabhängiges Koordinatensystem im CSM
+unter dem gewählten Eltern-KOS abgelegt und beim Speichern in der
+WelDX-Datei als `LocalCoordinateSystem` mit `time` und `coordinates`
+persistiert. Im 3D-Viewer (Koordinatensysteme → Transformationen)
+erscheint der Pfad automatisch als Trajektorie.
+            """
+        )
+
+
+def _render_path_import(state):
+    """File uploader + column/unit picker for path CSVs (3D welding paths)."""
+    if not hasattr(state, "coordinate_systems") or state.coordinate_systems is None:
+        state.coordinate_systems = {}
+
+    st.markdown("**CSV-Pfaddaten:**")
+
+    # ── List existing imported paths with delete button ──
+    existing = {
+        n: info for n, info in state.coordinate_systems.items()
+        if isinstance(info, dict) and info.get("_imported_path")
+    }
+    if existing:
+        st.write("**Importierte Pfade:**")
+        for name, info in list(existing.items()):
+            traj = info.get("trajectory")
+            n_pts = int(traj.shape[0]) if traj is not None and hasattr(traj, "shape") else 0
+            col_a, col_b = st.columns([6, 1])
+            with col_a:
+                st.markdown(
+                    f"`{name}` — {n_pts:,} Punkte · "
+                    f"Eltern-KOS: `{info.get('parent', '?')}`"
+                )
+            with col_b:
+                if st.button("🗑️", key=f"del_path_{name}", help="Pfad entfernen"):
+                    remove_imported_path(state, name)
+                    st.rerun()
+        st.divider()
+
+    col_upload, col_info = st.columns([2, 1])
+    with col_upload:
+        uploaded = st.file_uploader(
+            "CSV-Datei mit Schweißbahnkoordinaten hochladen",
+            type=["csv"],
+            key="path_uploader",
+        )
+    with col_info:
+        _render_path_help()
+
+    if uploaded is None:
+        return
+
+    try:
+        df = pd.read_csv(uploaded)
+    except Exception as e:
+        st.error(f"CSV nicht lesbar: {e}")
+        return
+
+    if df.empty:
+        st.error("CSV ist leer.")
+        return
+
+    cols = list(df.columns)
+
+    def _auto(col_keys):
+        for c in cols:
+            if str(c).lower() in col_keys:
+                return c
+        return None
+
+    # Numeric column fallbacks (skip time)
+    numeric_cols = [c for c in cols if pd.api.types.is_numeric_dtype(df[c])]
+
+    x_default = _auto(_PATH_X_KEYS)
+    y_default = _auto(_PATH_Y_KEYS)
+    z_default = _auto(_PATH_Z_KEYS)
+    t_default = None
+    for c in cols:
+        if any(k in str(c).lower() for k in _PATH_TIME_KEYS):
+            t_default = c
+            break
+
+    # Fallback if x/y/z not auto-detected: first three numeric columns
+    leftover = [c for c in numeric_cols if c != t_default]
+    if x_default is None and len(leftover) >= 1:
+        x_default = leftover[0]
+    if y_default is None and len(leftover) >= 2:
+        y_default = leftover[1]
+    if z_default is None and len(leftover) >= 3:
+        z_default = leftover[2]
+
+    with st.form("path_import_form", border=True):
+        st.markdown("**Vorschau (erste 5 Zeilen):**")
+        st.dataframe(df.head(), use_container_width=True)
+
+        col_x, col_y, col_z, col_t = st.columns(4)
+        with col_x:
+            x_col = st.selectbox(
+                "X-Spalte", cols,
+                index=cols.index(x_default) if x_default in cols else 0,
+            )
+        with col_y:
+            y_col = st.selectbox(
+                "Y-Spalte", cols,
+                index=cols.index(y_default) if y_default in cols else min(1, len(cols) - 1),
+            )
+        with col_z:
+            z_col = st.selectbox(
+                "Z-Spalte", cols,
+                index=cols.index(z_default) if z_default in cols else min(2, len(cols) - 1),
+            )
+        with col_t:
+            t_options = ["(keine — Sample-Index)"] + cols
+            t_idx = t_options.index(t_default) if t_default in cols else 0
+            time_col = st.selectbox("Zeitspalte (s)", t_options, index=t_idx)
+
+        col_u, col_p, col_n = st.columns([1, 2, 2])
+        with col_u:
+            unit = st.selectbox("Einheit", _PATH_UNIT_PRESETS, index=0)
+        with col_p:
+            cs_options = list(state.coordinate_systems.keys())
+            if not cs_options:
+                cs_options = ["workpiece"]
+            parent_default = "workpiece" if "workpiece" in cs_options else cs_options[0]
+            parent_cs = st.selectbox(
+                "Eltern-Koordinatensystem",
+                options=cs_options,
+                index=cs_options.index(parent_default),
+            )
+        with col_n:
+            default_name = uploaded.name.rsplit(".", 1)[0]
+            path_name = st.text_input(
+                "Pfad-Name",
+                value=default_name,
+                help="Eindeutiger CS-Name im CSM (z. B. tcp_design_2).",
+            )
+
+        submitted = st.form_submit_button("Pfad importieren", type="primary")
+
+    if not submitted:
+        return
+
+    try:
+        x = pd.to_numeric(df[x_col], errors="coerce").to_numpy(dtype=float)
+        y = pd.to_numeric(df[y_col], errors="coerce").to_numpy(dtype=float)
+        z = pd.to_numeric(df[z_col], errors="coerce").to_numpy(dtype=float)
+        t = None
+        if time_col != "(keine — Sample-Index)":
+            t = pd.to_numeric(df[time_col], errors="coerce").to_numpy(dtype=float)
+
+        mask = ~(np.isnan(x) | np.isnan(y) | np.isnan(z))
+        if t is not None:
+            mask &= ~np.isnan(t)
+        x, y, z = x[mask], y[mask], z[mask]
+        if t is not None:
+            t = t[mask]
+        if x.size == 0:
+            st.error("Keine numerischen Punkte gefunden.")
+            return
+
+        scale = _UNIT_TO_MM[unit]
+        pts_mm = np.column_stack([x, y, z]) * scale
+
+        info = add_imported_path(
+            state,
+            name=path_name.strip() or "path",
+            parent_cs=parent_cs,
+            points_xyz_mm=pts_mm,
+            time_s=t,
+        )
+        st.success(
+            f"Pfad '{info['name']}' importiert: {len(pts_mm):,} Punkte, "
+            f"Eltern-KOS '{parent_cs}'."
+        )
+
+        _plot_path_preview(pts_mm, info["name"])
+        st.rerun()
+    except Exception as e:
+        st.error(f"Fehler beim Importieren: {e}")
+
+
+def _plot_path_preview(pts_mm: np.ndarray, name: str):
+    """Small Plotly 3D preview of an imported path."""
+    try:
+        import plotly.graph_objects as go
+        fig = go.Figure()
+        fig.add_trace(go.Scatter3d(
+            x=pts_mm[:, 0], y=pts_mm[:, 1], z=pts_mm[:, 2],
+            mode="lines+markers",
+            line=dict(color="#cc0000", width=4),
+            marker=dict(size=2, color="#cc0000"),
+            name=name,
+            hoverinfo="name",
+        ))
+        fig.update_layout(
+            scene=dict(
+                xaxis_title="X [mm]", yaxis_title="Y [mm]", zaxis_title="Z [mm]",
+                aspectmode="data", bgcolor="white",
+                xaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="#f5f5f5"),
+                yaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="#f5f5f5"),
+                zaxis=dict(gridcolor="#ddd", color="#333", backgroundcolor="#f5f5f5"),
+            ),
+            paper_bgcolor="white", font=dict(color="#333333"),
+            height=380, margin=dict(l=0, r=0, t=10, b=0),
+        )
+        st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.info(f"3D-Vorschau nicht verfügbar: {e}")
+
+
 def _render_workpiece_geometry_tab(state):
     """Render the workpiece geometry tab."""
     st.subheader("Werkstück-Geometrie")
@@ -991,32 +1249,12 @@ def _render_workpiece_geometry_tab(state):
         state.tree["welding_speed"] = welding_speed
 
     st.info(
-        "**Komplexe 3D-Schweißbahnen:** Sie können komplexe 3D-Schweißpfade aus "
-        "CSM-Dateien oder als CSV-Pfaddaten importieren. Dies ermöglicht realistische "
-        "Schweißbahnen für mehrdimensionale Strukturen."
+        "**Komplexe 3D-Schweißbahnen:** Sie können komplexe 3D-Schweißpfade als "
+        "CSV importieren. Sie werden als zeitabhängiges Koordinatensystem im CSM "
+        "abgelegt und erscheinen automatisch als Trajektorie im 3D-Viewer."
     )
 
-    st.markdown("**CSV-Pfaddaten (optional):**")
-    uploaded_file = st.file_uploader(
-        "CSV-Datei mit Schweißbahnkoordinaten hochladen",
-        type=["csv"],
-        help="Erwartet Spalten: x, y, z (oder ähnlich)",
-    )
-
-    if uploaded_file is not None:
-        try:
-            import pandas as pd
-
-            df = pd.read_csv(uploaded_file)
-            st.success(f"CSV geladen: {len(df)} Zeilen")
-
-            # Display a preview
-            st.dataframe(df.head(10), use_container_width=True)
-
-            # Store the path data
-            state.tree["path_data"] = df.to_dict(orient="list")
-        except Exception as e:
-            st.error(f"Fehler beim Laden der CSV-Datei: {e}")
+    _render_path_import(state)
 
 
 def render_workpiece(state):
