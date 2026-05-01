@@ -149,7 +149,22 @@ def render_sidebar():
                     _save_file(state)
             with col2:
                 if st.button("🛡️ Validieren", use_container_width=True):
+                    from weldx_editor.panels.quality import _validate_weldx_schema
+                    result = _validate_weldx_schema(state)
+                    st.session_state.last_validation = result
                     st.session_state.active_panel = "quality"
+                    if result["valid"]:
+                        st.toast(
+                            f"✓ Validierung OK · {result['attributes_checked']} "
+                            f"Attribute geprüft, {result['warnings']} Warnung(en)",
+                            icon="✅",
+                        )
+                    else:
+                        st.toast(
+                            f"✗ {result['errors']} Fehler · "
+                            f"{result['warnings']} Warnung(en)",
+                            icon="⚠️",
+                        )
                     st.rerun()
 
             if st.button("🗙 Datei schließen", use_container_width=True):

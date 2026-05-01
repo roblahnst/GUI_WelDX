@@ -13,6 +13,12 @@ def render_quality(state):
     if not hasattr(state, 'quality'):
         state.quality = {}
 
+    # Show validation result triggered from sidebar (if any)
+    last = st.session_state.pop("last_validation", None)
+    if last is not None:
+        _render_validation_result(last, banner=True)
+        st.divider()
+
     tab1, tab2 = st.tabs(["ISO 5817 Bewertungsgruppe", "Schema-Validierung"])
 
     # ========== TAB 1: ISO 5817 Bewertungsgruppe ==========
@@ -169,54 +175,18 @@ def render_quality(state):
         if st.button("🔍 Schema validieren", use_container_width=True, type="primary"):
             with st.spinner("Validierung läuft..."):
                 try:
-                    # Try to import weldx
                     try:
-                        import weldx
+                        import weldx  # noqa: F401
                         has_weldx = True
                     except ImportError:
                         has_weldx = False
 
                     if has_weldx:
                         try:
-                            # Attempt validation (demo implementation)
                             validation_result = _validate_weldx_schema(state)
-
-                            if validation_result['valid']:
-                                st.success(
-                                    f"✓ Schema-Validierung erfolgreich!\n\n"
-                                    f"{validation_result['message']}"
-                                )
-
-                                # Display validation summary
-                                col1, col2, col3 = st.columns(3)
-                                with col1:
-                                    st.metric("Validierte Attribute", validation_result.get('attributes_checked', 0))
-                                with col2:
-                                    st.metric("Fehler", validation_result.get('errors', 0))
-                                with col3:
-                                    st.metric("Warnungen", validation_result.get('warnings', 0))
-
-                            else:
-                                st.error(
-                                    f"✗ Validierungsfehler:\n\n"
-                                    f"{validation_result['message']}"
-                                )
-
-                                if 'errors_detail' in validation_result:
-                                    st.error("**Details:**")
-                                    for error in validation_result['errors_detail']:
-                                        st.error(f"- {error}")
-
-                                if 'warnings_detail' in validation_result:
-                                    st.warning("**Warnungen:**")
-                                    for warning in validation_result['warnings_detail']:
-                                        st.warning(f"- {warning}")
-
+                            _render_validation_result(validation_result, banner=False)
                         except Exception as e:
-                            st.error(
-                                f"Fehler bei der Validierung:\n\n"
-                                f"`{str(e)}`"
-                            )
+                            st.error(f"Fehler bei der Validierung:\n\n`{str(e)}`")
                     else:
                         st.info(
                             "ℹ️ WeldX ist nicht installiert.\n\n"
@@ -283,6 +253,36 @@ def render_quality(state):
             status_icon = "✅" if has_measurements else "❌"
             meas_count = len([m for m in state.measurements.items() if m[0] != 'sensors']) if has_measurements else 0
             st.metric(f"{status_icon} Messungen", meas_count)
+
+
+def _render_validation_result(result: dict, banner: bool = False):
+    """Render a validation result. ``banner=True`` adds a header for sidebar-triggered runs."""
+    if banner:
+        st.subheader("🛡️ Validierung")
+
+    if result["valid"]:
+        st.success(f"✓ Schema-Validierung erfolgreich!\n\n{result['message']}")
+    else:
+        st.error(f"✗ Validierungsfehler:\n\n{result['message']}")
+
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Validierte Attribute", result.get("attributes_checked", 0))
+    with col2:
+        st.metric("Fehler", result.get("errors", 0))
+    with col3:
+        st.metric("Warnungen", result.get("warnings", 0))
+
+    errs = result.get("errors_detail") or []
+    warns = result.get("warnings_detail") or []
+    if errs:
+        with st.expander(f"🚫 {len(errs)} Fehler", expanded=not result["valid"]):
+            for e in errs:
+                st.error(f"- {e}")
+    if warns:
+        with st.expander(f"⚠️ {len(warns)} Warnungen", expanded=False):
+            for w in warns:
+                st.warning(f"- {w}")
 
 
 def _validate_weldx_schema(state) -> dict:
