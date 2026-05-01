@@ -497,6 +497,7 @@ def _render_groove_tab(state):
         index=list(GROOVE_TYPES.keys()).index(state.groove.get("type", "V-Naht"))
         if isinstance(state.groove, dict)
         else 0,
+        accept_new_options=False,
     )
 
     if isinstance(state.groove, dict):
